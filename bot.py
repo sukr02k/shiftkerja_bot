@@ -335,38 +335,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_states[user_id] = {}
     
     welcome_msg = """
-🎉 **Bot Jadwal Kerja - Shift Bot** 
+🎉 **Selamat Datang di Shift Bot!**
 
 Bot untuk manajemen jadwal shift kerja dengan fitur lengkap!
 
 **⏰ Shift Template:**
-• 🟥 Shift 1 (00:00-08:00) - Mulai 00:00
-• 🟩 Shift 2 (08:00-16:00) - Mulai 08:00  
-• 🟦 Shift 3 (16:00-00:00) - Mulai 16:00
-• 🟨 Operasional (11:00-19:00) - Mulai 11:00
-• ⏰ Custom Time - Jam fleksibel
+• Shift 1 (00:00-08:00)
+• Shift 2 (08:00-16:00)
+• Shift 3 (16:00-00:00)
+• Operasional (11:00-19:00)
 
-**Quick Actions:**
-• ➕ Tambah Jadwal
-• 📋 Lihat semua jadwal  
-• 📅 Jadwal hari ini
-• 🔍 Search jadwal
-• 📊 Filter by date
-
-**Natural Language:**
-Ketik: "Shift 1 besok" atau "meeting jam 2 siang"
-Bot akan otomatis parse!
-
-**Commands:**
-/add - Tambah jadwal manual
-/search [keyword] - Cari jadwal
-/filter [start] [end] - Filter by date
+**Fitur:**
+• Natural Language Input
+• Multiple Reminders
+• Calendar Visual
+• Search & Filter
 
 Klik tombol di bawah untuk mulai! 👇
 """
     
-    await update.message.reply_text(welcome_msg, parse_mode='Markdown', 
-                                     reply_markup=create_main_menu())
+    keyboard = [
+        [InlineKeyboardButton('🚀 Mulai Sekarang', callback_data='show_menu')],
+        [InlineKeyboardButton('📖 Panduan', callback_data='help')],
+    ]
+    
+    await update.message.reply_text(welcome_msg, parse_mode='Markdown',
+                                     reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_msg = """
@@ -488,6 +482,99 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(msg, parse_mode='Markdown',
                                                 reply_markup=create_reminder_selection_keyboard())
                 return
+        
+        elif state.get('waiting_for') == 'search':
+            keyword = text.strip()
+            schedules = database.search_schedules(user_id, keyword)
+            
+            if not schedules:
+                await update.message.reply_text(
+                    f"🔍 Tidak ditemukan jadwal dengan keyword: **{keyword}**",
+                    parse_mode='Markdown',
+                    reply_markup=create_main_menu()
+                )
+            else:
+                msg = f"🔍 **Hasil Search '{keyword}':**\n\n"
+                for i, s in enumerate(schedules, 1):
+                    status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+                    msg += f"{i}. {status_emoji} **{s['title']}**\n"
+                    msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+                    msg += f"   ID: {s['id']}\n\n"
+                
+                await update.message.reply_text(msg, parse_mode='Markdown',
+                                                reply_markup=create_main_menu())
+            
+            user_states[user_id] = {}
+            return
+        
+        elif state.get('waiting_for') == 'filter_start':
+            try:
+                if '/' in text:
+                    parts = text.split('/')
+                    day = int(parts[0])
+                    month = int(parts[1])
+                    year = int(parts[2]) if len(parts) > 2 else datetime.now().year
+                    start_date = datetime(year, month, day)
+                    
+                    state['filter_start'] = start_date
+                    state['waiting_for'] = 'filter_end'
+                    
+                    await update.message.reply_text(
+                        f"✅ Start: {start_date.strftime('%d/%m/%Y')}\n\n📊 Ketik tanggal akhir (DD/MM/YYYY):",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text(
+                        "❌ Format salah!\n\nGunakan: DD/MM/YYYY atau DD/MM",
+                        parse_mode='Markdown'
+                    )
+            except:
+                await update.message.reply_text(
+                    "❌ Format tanggal salah!\n\nGunakan: DD/MM/YYYY atau DD/MM",
+                    parse_mode='Markdown'
+                )
+            return
+        
+        elif state.get('waiting_for') == 'filter_end':
+            try:
+                if '/' in text:
+                    parts = text.split('/')
+                    day = int(parts[0])
+                    month = int(parts[1])
+                    year = int(parts[2]) if len(parts) > 2 else datetime.now().year
+                    end_date = datetime(year, month, day, 23, 59, 59)
+                    
+                    start_date = state.get('filter_start')
+                    schedules = database.get_schedules_by_date_range(user_id, start_date, end_date)
+                    
+                    if not schedules:
+                        await update.message.reply_text(
+                            f"📊 Tidak ada jadwal dalam range tersebut.",
+                            parse_mode='Markdown',
+                            reply_markup=create_main_menu()
+                        )
+                    else:
+                        msg = f"📊 **Jadwal {start_date.strftime('%d/%m')} - {end_date.strftime('%d/%m')}:**\n\n"
+                        for i, s in enumerate(schedules, 1):
+                            status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+                            msg += f"{i}. {status_emoji} **{s['title']}**\n"
+                            msg += f"   📅 {format_datetime(s['schedule_time'])}\n\n"
+                        
+                        await update.message.reply_text(msg, parse_mode='Markdown',
+                                                        reply_markup=create_main_menu())
+                    
+                    user_states[user_id] = {}
+                else:
+                    await update.message.reply_text(
+                        "❌ Format salah!\n\nGunakan: DD/MM/YYYY atau DD/MM",
+                        parse_mode='Markdown'
+                    )
+            except:
+                await update.message.reply_text(
+                    "❌ Format tanggal salah!\n\nGunakan: DD/MM/YYYY atau DD/MM",
+                    parse_mode='Markdown'
+                )
+            return
     
     parsed_datetime = try_parse_full_natural(text)
     if parsed_datetime:
@@ -893,10 +980,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • 30 min
 • 1 hour
 
+**⏰ Shift Templates:**
+• Shift 1: 00:00-08:00
+• Shift 2: 08:00-16:00
+• Shift 3: 16:00-00:00
+• Operasional: 11:00-19:00
+
+**📊 Statistics:**
+Total jadwal: {total}
+Pending: {pending}
+Completed: {completed}
+
 Pilih reminder sesuai kebutuhan saat membuat jadwal.
 """
+        
+        schedules = database.get_user_schedules(user_id)
+        total = len(schedules)
+        pending = len([s for s in schedules if s['status'] == 'pending'])
+        completed = len([s for s in schedules if s['status'] == 'completed'])
+        
+        msg = msg.format(total=total, pending=pending, completed=completed)
+        
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
+        return
+    
+    if data == 'show_menu':
+        await query.edit_message_text(
+            "🏠 **Menu Utama**\n\nPilih aksi:",
+            parse_mode='Markdown',
+            reply_markup=create_main_menu()
+        )
         return
     
     if data.startswith('complete_'):
