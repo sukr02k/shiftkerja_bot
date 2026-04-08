@@ -278,6 +278,43 @@ def update_schedule_status(user_id: int, schedule_id: int, status: str) -> bool:
     conn.close()
     return updated
 
+def update_schedule(user_id: int, schedule_id: int, title: str = None, description: str = None, 
+                   schedule_time: datetime = None, remind_times: str = None) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    updates = []
+    params = []
+    
+    if title is not None:
+        updates.append("title = ?")
+        params.append(title)
+    
+    if description is not None:
+        updates.append("description = ?")
+        params.append(description)
+    
+    if schedule_time is not None:
+        updates.append("schedule_time = ?")
+        params.append(schedule_time.isoformat())
+    
+    if remind_times is not None:
+        updates.append("remind_times = ?")
+        params.append(remind_times)
+    
+    if not updates:
+        conn.close()
+        return False
+    
+    params.extend([schedule_id, user_id])
+    
+    query = f"UPDATE schedules SET {', '.join(updates)} WHERE id = ? AND user_id = ?"
+    cursor.execute(query, params)
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
 def mark_reminder_sent(schedule_id: int, reminder_time: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()

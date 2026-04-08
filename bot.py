@@ -394,9 +394,6 @@ def create_filter_main_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton('📅 Filter by Time', callback_data='filter_time'),
         ],
         [
-            InlineKeyboardButton('✅ Filter by Status', callback_data='filter_status'),
-        ],
-        [
             InlineKeyboardButton('⬅️ Back to Menu', callback_data='show_menu'),
         ],
     ]
@@ -442,23 +439,6 @@ def create_filter_time_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def create_filter_status_keyboard() -> InlineKeyboardMarkup:
-    keyboard = [
-        [
-            InlineKeyboardButton('⏳ Pending', callback_data='filter_pending'),
-        ],
-        [
-            InlineKeyboardButton('✅ Completed', callback_data='filter_completed'),
-        ],
-        [
-            InlineKeyboardButton('📊 All', callback_data='filter_all'),
-        ],
-        [
-            InlineKeyboardButton('⬅️ Back', callback_data='filter'),
-        ],
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
 def create_main_menu() -> InlineKeyboardMarkup:
     keyboard = [
         [
@@ -491,6 +471,26 @@ def create_schedule_actions_keyboard(schedule_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton('🏠 Menu Utama', callback_data='main_menu'),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def create_edit_keyboard(schedule_id: int) -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton('📝 Edit Judul', callback_data=f'edit_title_{schedule_id}'),
+        ],
+        [
+            InlineKeyboardButton('📅 Edit Waktu', callback_data=f'edit_time_{schedule_id}'),
+        ],
+        [
+            InlineKeyboardButton('🔄 Edit Shift', callback_data=f'edit_shift_{schedule_id}'),
+        ],
+        [
+            InlineKeyboardButton('🔔 Edit Reminder', callback_data=f'edit_reminder_{schedule_id}'),
+        ],
+        [
+            InlineKeyboardButton('⬅️ Kembali', callback_data=f'back_to_schedule_{schedule_id}'),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -802,6 +802,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             return
         
+        elif state.get('waiting_for') == 'edit_title':
+            schedule_id = state.get('editing_schedule_id')
+            new_title = text.strip()
+            
+            if database.update_schedule(user_id, schedule_id, title=new_title):
+                schedule = database.get_schedule_by_id(schedule_id)
+                await update.message.reply_text(
+                    f"✅ Judul berhasil diubah!\n\nJudul baru: {new_title}",
+                    reply_markup=create_schedule_actions_keyboard(schedule_id)
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Gagal mengubah judul.",
+                    reply_markup=create_main_menu()
+                )
+            
+            user_states[user_id] = {}
+            return
+        
         elif state.get('waiting_for') == 'search':
             keyword = text.strip()
             schedules = database.search_schedules(user_id, keyword)
@@ -1048,6 +1067,28 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shift_info = template_shifts[shift_type]
             hour = shift_info['hour']
             
+            if user_states[user_id].get('waiting_for') == 'edit_time' or user_states[user_id].get('waiting_for') == 'edit_shift':
+                schedule_id = user_states[user_id].get('editing_schedule_id')
+                schedule = database.get_schedule_by_id(schedule_id)
+                
+                if schedule:
+                    old_time = schedule['schedule_time']
+                    new_time = old_time.replace(hour=hour, minute=0, second=0, microsecond=0)
+                    
+                    if database.update_schedule(user_id, schedule_id, schedule_time=new_time, description=shift_info['name']):
+                        await query.edit_message_text(
+                            f"✅ Waktu berhasil diubah!\n\n{shift_info['name']}\n📅 {format_datetime(new_time)}",
+                            reply_markup=create_schedule_actions_keyboard(schedule_id)
+                        )
+                    else:
+                        await query.edit_message_text(
+                            "❌ Gagal mengubah waktu.",
+                            reply_markup=create_main_menu()
+                        )
+                
+                user_states[user_id] = {}
+                return
+            
             date = user_states[user_id].get('date', get_local_now())
             schedule_time = date.replace(hour=hour, minute=0, second=0, microsecond=0)
             
@@ -1164,6 +1205,49 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if not remind_times:
                 remind_times = '5'
+            
+            if user_states[user_id].get('waiting_for') == 'edit_reminder':
+                schedule_id = user_states[user_id].get('editing_schedule_id')
+                schedule = database.get_schedule_by_id(schedule_id)
+                
+                if schedule:
+                    for job in context.application.job_queue.get_jobs_by_name(f'reminder_{schedule_id}'):
+                        job.schedule_removal()
+                    
+                    if database.update_schedule(user_id, schedule_id, remind_times=remind_times):
+                        schedule_time = schedule['schedule_time']
+                        title = schedule['title']
+                        
+                        for rem_time in [int(x) for x in remind_times.split(',')]:
+                            reminder_datetime = schedule_time - timedelta(minutes=rem_time)
+                            if reminder_datetime > get_local_now():
+                                delay_seconds = (reminder_datetime - get_local_now()).total_seconds()
+                                context.application.job_queue.run_once(
+                                    send_reminder_job,
+                                    when=delay_seconds,
+                                    data={
+                                        'user_id': user_id,
+                                        'schedule_id': schedule_id,
+                                        'title': title,
+                                        'schedule_time': schedule_time,
+                                        'rem_minutes': rem_time
+                                    },
+                                    name=f'reminder_{schedule_id}_{rem_time}'
+                                )
+                        
+                        remind_str = ', '.join([f'{x} min' for x in remind_times.split(',')])
+                        await query.edit_message_text(
+                            f"✅ Reminder berhasil diubah!\n\n🔔 Reminder: {remind_str} sebelum",
+                            reply_markup=create_schedule_actions_keyboard(schedule_id)
+                        )
+                    else:
+                        await query.edit_message_text(
+                            "❌ Gagal mengubah reminder.",
+                            reply_markup=create_main_menu()
+                        )
+                
+                user_states[user_id] = {}
+                return
             
             schedule_time = user_states[user_id].get('schedule_time', get_local_now())
             title = user_states[user_id].get('title', 'Jadwal')
@@ -1349,36 +1433,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                       reply_markup=create_filter_time_keyboard())
         return
     
-    if data == 'filter_status':
-        msg = "✅ **Filter by Status**\n\nPilih status:"
-        await query.edit_message_text(msg, parse_mode='Markdown',
-                                      reply_markup=create_filter_status_keyboard())
-        return
-    
     if data.startswith('filter_shift_'):
         shift_num = data.replace('filter_shift_', '')
         
-        shift_times = {
-            '1': (0, 8, '🟥 Shift 1 (00:00-08:00)'),
-            '2': (8, 16, '🟩 Shift 2 (08:00-16:00)'),
-            '3': (16, 24, '🟦 Shift 3 (16:00-00:00)'),
-            'ops': (11, 19, '🟨 Operasional (11:00-19:00)')
+        shift_names = {
+            '1': '🟥 Shift 1 (00:00-08:00)',
+            '2': '🟩 Shift 2 (08:00-16:00)',
+            '3': '🟦 Shift 3 (16:00-00:00)',
+            'ops': '🟨 Operasional (11:00-19:00)'
         }
         
-        if shift_num in shift_times:
-            start_hour, end_hour, shift_name = shift_times[shift_num]
+        if shift_num in shift_names:
+            shift_name = shift_names[shift_num]
             
             all_schedules = database.get_user_schedules(user_id)
             
             filtered = []
             for s in all_schedules:
-                hour = s['schedule_time'].hour
-                if shift_num == '3':
-                    if hour >= start_hour or hour < end_hour:
-                        filtered.append(s)
-                else:
-                    if start_hour <= hour < end_hour:
-                        filtered.append(s)
+                description = s.get('description', '')
+                if description == shift_name:
+                    filtered.append(s)
             
             if not filtered:
                 msg = f"{shift_name}\n\n📭 Tidak ada jadwal untuk shift ini."
@@ -1391,52 +1465,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await query.edit_message_text(msg, parse_mode='Markdown',
                                           reply_markup=create_main_menu())
-        return
-    
-    if data == 'filter_pending':
-        schedules = database.get_user_schedules(user_id, status='pending')
-        
-        if not schedules:
-            msg = "⏳ **Pending Jadwal**\n\n📭 Tidak ada jadwal pending."
-        else:
-            msg = f"⏳ **Pending Jadwal ({len(schedules)} items):**\n\n"
-            for i, s in enumerate(schedules, 1):
-                msg += f"{i}. **{s['title']}**\n"
-                msg += f"   📅 {format_schedule_display(s)}\n"
-        
-        await query.edit_message_text(msg, parse_mode='Markdown',
-                                      reply_markup=create_main_menu())
-        return
-    
-    if data == 'filter_completed':
-        schedules = database.get_user_schedules(user_id, status='completed')
-        
-        if not schedules:
-            msg = "✅ **Completed Jadwal**\n\n📭 Tidak ada jadwal yang sudah selesai."
-        else:
-            msg = f"✅ **Completed Jadwal ({len(schedules)} items):**\n\n"
-            for i, s in enumerate(schedules, 1):
-                msg += f"{i}. **{s['title']}**\n"
-                msg += f"   📅 {format_schedule_display(s)}\n"
-        
-        await query.edit_message_text(msg, parse_mode='Markdown',
-                                      reply_markup=create_main_menu())
-        return
-    
-    if data == 'filter_all':
-        schedules = database.get_user_schedules(user_id)
-        
-        if not schedules:
-            msg = "📊 **Semua Jadwal**\n\n📭 Tidak ada jadwal."
-        else:
-            msg = f"📊 **Semua Jadwal ({len(schedules)} items):**\n\n"
-            for i, s in enumerate(schedules, 1):
-                status_emoji = '✅' if s['status'] == 'completed' else '⏳'
-                msg += f"{i}. {status_emoji} **{s['title']}**\n"
-                msg += f"   📅 {format_schedule_display(s)}\n"
-        
-        await query.edit_message_text(msg, parse_mode='Markdown',
-                                      reply_markup=create_main_menu())
         return
     
     if data == 'filter_today':
@@ -1597,6 +1625,107 @@ Pilih reminder sesuai kebutuhan saat membuat jadwal.
                 "❌ Jadwal tidak ditemukan.",
                 reply_markup=create_main_menu()
             )
+        return
+    
+    if data.startswith('edit_') and not data.startswith('edit_title_') and not data.startswith('edit_time_') and not data.startswith('edit_shift_') and not data.startswith('edit_reminder_'):
+        schedule_id = int(data.replace('edit_', ''))
+        schedule = database.get_schedule_by_id(schedule_id)
+        
+        if schedule and schedule['user_id'] == user_id:
+            msg = f"""
+📝 **Edit Jadwal**
+
+ID: {schedule_id}
+Judul: {schedule['title']}
+📅 {format_datetime(schedule['schedule_time'])}
+
+Pilih yang ingin diubah:
+"""
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_edit_keyboard(schedule_id))
+        else:
+            await query.edit_message_text(
+                "❌ Jadwal tidak ditemukan.",
+                reply_markup=create_main_menu()
+            )
+        return
+    
+    if data.startswith('edit_title_'):
+        schedule_id = int(data.replace('edit_title_', ''))
+        schedule = database.get_schedule_by_id(schedule_id)
+        
+        if schedule and schedule['user_id'] == user_id:
+            user_states[user_id] = {
+                'editing_schedule_id': schedule_id,
+                'waiting_for': 'edit_title'
+            }
+            await query.edit_message_text(
+                f"📝 Edit Judul\n\nJudul saat ini: {schedule['title']}\n\nKetik judul baru:",
+                reply_markup=None
+            )
+        return
+    
+    if data.startswith('edit_time_'):
+        schedule_id = int(data.replace('edit_time_', ''))
+        schedule = database.get_schedule_by_id(schedule_id)
+        
+        if schedule and schedule['user_id'] == user_id:
+            user_states[user_id] = {
+                'editing_schedule_id': schedule_id,
+                'waiting_for': 'edit_time',
+                'edit_date': schedule['schedule_time']
+            }
+            await query.edit_message_text(
+                f"📅 Edit Waktu\n\nWaktu saat ini: {format_datetime(schedule['schedule_time'])}\n\nPilih waktu baru:",
+                reply_markup=create_shift_selection_keyboard()
+            )
+        return
+    
+    if data.startswith('edit_shift_'):
+        schedule_id = int(data.replace('edit_shift_', ''))
+        schedule = database.get_schedule_by_id(schedule_id)
+        
+        if schedule and schedule['user_id'] == user_id:
+            user_states[user_id] = {
+                'editing_schedule_id': schedule_id,
+                'waiting_for': 'edit_shift'
+            }
+            msg = f"🔄 Edit Shift\n\nShift saat ini: {schedule.get('description', '-')}\n\nPilih shift baru:"
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_shift_selection_keyboard())
+        return
+    
+    if data.startswith('edit_reminder_'):
+        schedule_id = int(data.replace('edit_reminder_', ''))
+        schedule = database.get_schedule_by_id(schedule_id)
+        
+        if schedule and schedule['user_id'] == user_id:
+            user_states[user_id] = {
+                'editing_schedule_id': schedule_id,
+                'waiting_for': 'edit_reminder',
+                'remind_times': schedule.get('remind_times', '5')
+            }
+            msg = f"🔔 Edit Reminder\n\nReminder saat ini: {schedule.get('remind_times', '5')} menit\n\nPilih reminder baru:"
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_reminder_selection_keyboard(schedule.get('remind_times', '5')))
+        return
+    
+    if data.startswith('back_to_schedule_'):
+        schedule_id = int(data.replace('back_to_schedule_', ''))
+        schedule = database.get_schedule_by_id(schedule_id)
+        
+        if schedule and schedule['user_id'] == user_id:
+            status_emoji = get_smart_status(schedule)
+            status_text = get_status_text(schedule)
+            
+            msg = f"""
+📝 {schedule['title']}
+📅 {format_datetime(schedule['schedule_time'])}
+📊 {status_text}
+ID: {schedule_id}
+"""
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_schedule_actions_keyboard(schedule_id))
         return
     
     if data.startswith('rem_'):
