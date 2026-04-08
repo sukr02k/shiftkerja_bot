@@ -1,16 +1,14 @@
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import os
 
 DB_PATH = os.environ.get('DB_PATH', os.path.join(os.path.dirname(__file__), 'schedules.db'))
 
-TIMEZONE_OFFSET = timedelta(hours=8)
+WITA_TIMEZONE = timezone(timedelta(hours=8))
 
 def get_local_now():
-    utc_now = datetime.utcnow()
-    local_now = utc_now + TIMEZONE_OFFSET
-    return local_now
+    return datetime.now(WITA_TIMEZONE)
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -166,7 +164,7 @@ def get_all_pending_schedules() -> List[dict]:
             'user_id': row[1],
             'title': row[2],
             'description': row[3],
-            'schedule_time': datetime.fromisoformat(row[4]),
+            'schedule_time': datetime.fromisoformat(row[4]).replace(tzinfo=WITA_TIMEZONE),
             'remind_times': row[5],
             'status': row[6],
             'recurring_type': row[7]
@@ -240,7 +238,7 @@ def get_schedule_by_id(schedule_id: int) -> Optional[dict]:
             'user_id': row[1],
             'title': row[2],
             'description': row[3],
-            'schedule_time': datetime.fromisoformat(row[4]),
+            'schedule_time': datetime.fromisoformat(row[4]).replace(tzinfo=WITA_TIMEZONE),
             'remind_times': row[5],
             'status': row[6],
             'recurring_type': row[7]

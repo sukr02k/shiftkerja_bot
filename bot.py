@@ -2,7 +2,7 @@ import os
 import logging
 import re
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from calendar import monthrange
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -16,14 +16,13 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 
-TIMEZONE_OFFSET = timedelta(hours=8)  # WITA (UTC+8) for Kalimantan Utara
+WITA_OFFSET = timedelta(hours=8)
+WITA_TIMEZONE = timezone(WITA_OFFSET)
 
 def get_local_now():
-    utc_now = datetime.utcnow()
-    local_now = utc_now + TIMEZONE_OFFSET
-    return local_now
+    return datetime.now(WITA_TIMEZONE)
 
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(timezone=WITA_TIMEZONE)
 scheduler.start()
 
 user_states = {}
@@ -68,6 +67,10 @@ def restore_reminders():
             user_id = schedule['user_id']
             title = schedule['title']
             schedule_time = schedule['schedule_time']
+            
+            if schedule_time.tzinfo is None:
+                schedule_time = schedule_time.replace(tzinfo=WITA_TIMEZONE)
+            
             remind_times = schedule.get('remind_times', '5')
             
             logger.info(f"Schedule {schedule_id}: time={schedule_time}, remind_times={remind_times}")
@@ -670,8 +673,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if parsed_time:
                 hour, minute = parsed_time
-                date = state.get('date', datetime.now())
-                schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                date = state.get('date', get_local_now())
+                schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0, tzinfo=WITA_TIMEZONE)
                 
                 title = state.get('title', 'Untitled')
                 
@@ -960,8 +963,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shift_info = template_shifts[shift_type]
             hour = shift_info['hour']
             
-            date = user_states[user_id].get('date', datetime.now())
-            schedule_time = date.replace(hour=hour, minute=0, second=0, microsecond=0)
+            date = user_states[user_id].get('date', get_local_now())
+            schedule_time = date.replace(hour=hour, minute=0, second=0, microsecond=0, tzinfo=WITA_TIMEZONE)
             
             user_states[user_id]['schedule_time'] = schedule_time
             user_states[user_id]['waiting_for'] = 'reminder'
@@ -1003,8 +1006,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == 'back_shift':
-        year = user_states[user_id].get('date', datetime.now()).year
-        month = user_states[user_id].get('date', datetime.now()).month
+        now = get_local_now()
+        year = user_states[user_id].get('date', now).year
+        month = user_states[user_id].get('date', now).month
         
         msg = "📅 Pilih tanggal:"
         await query.edit_message_text(msg, parse_mode='Markdown',
@@ -1016,8 +1020,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hour, minute = map(int, time_str.split(':'))
         
         if user_id in user_states:
-            date = user_states[user_id].get('date', datetime.now())
-            schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            date = user_states[user_id].get('date', get_local_now())
+            schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0, tzinfo=WITA_TIMEZONE)
             
             user_states[user_id]['schedule_time'] = schedule_time
             user_states[user_id]['waiting_for'] = 'reminder'
@@ -1076,7 +1080,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not remind_times:
                 remind_times = '5'
             
-            schedule_time = user_states[user_id].get('schedule_time', datetime.now())
+            schedule_time = user_states[user_id].get('schedule_time', get_local_now())
             title = user_states[user_id].get('title', 'Jadwal')
             shift_info = user_states[user_id].get('shift_info', '')
             
@@ -1116,7 +1120,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == 'skip_reminder':
         if user_id in user_states:
-            schedule_time = user_states[user_id].get('schedule_time', datetime.now())
+            schedule_time = user_states[user_id].get('schedule_time', get_local_now())
             title = user_states[user_id].get('title', 'Jadwal')
             shift_info = user_states[user_id].get('shift_info', '')
             
@@ -1140,7 +1144,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == 'back_to_schedule':
         if user_id in user_states:
-            schedule_time = user_states[user_id].get('schedule_time', datetime.now())
+            schedule_time = user_states[user_id].get('schedule_time', get_local_now())
             title = user_states[user_id].get('title', 'Jadwal')
             
             msg = f"""
@@ -1527,6 +1531,9 @@ def send_reminder_sync(user_id: int, schedule_id: int, title: str, schedule_time
 async def send_reminder(user_id: int, schedule_id: int, title: str, schedule_time: datetime, rem_minutes: int):
     app = None
     try:
+        if schedule_time.tzinfo is None:
+            schedule_time = schedule_time.replace(tzinfo=WITA_TIMEZONE)
+        
         app = Application.builder().token(BOT_TOKEN).build()
         await app.initialize()
         await app.start()
