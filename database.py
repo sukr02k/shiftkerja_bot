@@ -1,9 +1,16 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 import os
 
 DB_PATH = os.environ.get('DB_PATH', os.path.join(os.path.dirname(__file__), 'schedules.db'))
+
+TIMEZONE_OFFSET = timedelta(hours=8)
+
+def get_local_now():
+    utc_now = datetime.utcnow()
+    local_now = utc_now + TIMEZONE_OFFSET
+    return local_now
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -64,7 +71,7 @@ def add_schedule(user_id: int, title: str, description: str, schedule_time: date
                               status, recurring_type, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ''', (user_id, title, description, schedule_time.isoformat(), remind_times, 
-          'pending', recurring_type, datetime.now().isoformat()))
+          'pending', recurring_type, get_local_now().isoformat()))
     schedule_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -106,7 +113,7 @@ def get_user_schedules(user_id: int, status: str = None) -> List[dict]:
     return schedules
 
 def get_today_schedules(user_id: int) -> List[dict]:
-    today = datetime.now().date()
+    today = get_local_now().date()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -148,7 +155,7 @@ def get_all_pending_schedules() -> List[dict]:
         FROM schedules
         WHERE schedule_time > ? AND status = 'pending'
         ORDER BY schedule_time ASC
-    ''', (datetime.now().isoformat(),))
+    ''', (get_local_now().isoformat(),))
     rows = cursor.fetchall()
     conn.close()
     
@@ -259,7 +266,7 @@ def mark_reminder_sent(schedule_id: int, reminder_time: str):
     cursor.execute('''
         INSERT INTO reminders_sent (schedule_id, reminder_time, sent_at)
         VALUES (?, ?, ?)
-    ''', (schedule_id, reminder_time, datetime.now().isoformat()))
+    ''', (schedule_id, reminder_time, get_local_now().isoformat()))
     conn.commit()
     conn.close()
 

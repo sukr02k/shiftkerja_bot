@@ -1,6 +1,7 @@
 import os
 import logging
 import re
+import asyncio
 from datetime import datetime, timedelta
 from calendar import monthrange
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -55,6 +56,46 @@ scheduler.add_job(
 )
 
 logger.info("Auto-complete scheduler started - runs every 30 minutes")
+
+def restore_reminders():
+    try:
+        pending_schedules = database.get_all_pending_schedules()
+        restored_count = 0
+        
+        for schedule in pending_schedules:
+            schedule_id = schedule['id']
+            user_id = schedule['user_id']
+            title = schedule['title']
+            schedule_time = schedule['schedule_time']
+            remind_times = schedule.get('remind_times', '15')
+            
+            if not remind_times:
+                continue
+            
+            sent_reminders = database.get_sent_reminders(schedule_id)
+            
+            for rem_time in [int(x) for x in remind_times.split(',')]:
+                if str(rem_time) in sent_reminders:
+                    continue
+                    
+                reminder_datetime = schedule_time - timedelta(minutes=rem_time)
+                
+                if reminder_datetime > get_local_now():
+                    scheduler.add_job(
+                        send_reminder_sync,
+                        trigger=DateTrigger(run_date=reminder_datetime),
+                        args=[user_id, schedule_id, title, schedule_time, rem_time],
+                        id=f'reminder_{schedule_id}_{rem_time}',
+                        replace_existing=True
+                    )
+                    restored_count += 1
+                    logger.info(f"Restored reminder for schedule {schedule_id} at {reminder_datetime}")
+        
+        logger.info(f"Restored {restored_count} reminders from database")
+    except Exception as e:
+        logger.error(f"Error restoring reminders: {e}")
+
+restore_reminders()
 
 def get_smart_status(schedule: dict) -> str:
     now = get_local_now()
@@ -1003,7 +1044,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reminder_datetime = schedule_time - timedelta(minutes=rem_time)
                 if reminder_datetime > get_local_now():
                     scheduler.add_job(
-                        send_reminder,
+                        send_reminder_sync,
                         trigger=DateTrigger(run_date=reminder_datetime),
                         args=[user_id, schedule_id, title, schedule_time, rem_time],
                         id=f'reminder_{schedule_id}_{rem_time}',
@@ -1424,6 +1465,15 @@ Pilih reminder sesuai kebutuhan saat membuat jadwal.
         )
         return
 
+def send_reminder_sync(user_id: int, schedule_id: int, title: str, schedule_time: datetime, rem_minutes: int):
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_reminder(user_id, schedule_id, title, schedule_time, rem_minutes))
+        loop.close()
+    except Exception as e:
+        logger.error(f"Error in send_reminder_sync: {e}")
+
 async def send_reminder(user_id: int, schedule_id: int, title: str, schedule_time: datetime, rem_minutes: int):
     try:
         app = Application.builder().token(BOT_TOKEN).build()
@@ -1555,7 +1605,7 @@ async def add_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYP
         reminder_time = schedule_time - timedelta(minutes=rem_time)
         if reminder_time > now:
             scheduler.add_job(
-                send_reminder,
+                send_reminder_sync,
                 trigger=DateTrigger(run_date=reminder_time),
                 args=[user_id, schedule_id, title, schedule_time, rem_time],
                 id=f'reminder_{schedule_id}_{rem_time}',
