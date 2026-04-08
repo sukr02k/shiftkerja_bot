@@ -30,6 +30,10 @@ def parse_time_natural(text: str) -> tuple:
     text = text.lower()
     
     time_patterns = [
+        (r'shift\s*1|shift\s*satu', lambda m: (0, 0)),
+        (r'shift\s*2|shift\s*dua', lambda m: (8, 0)),
+        (r'shift\s*3|shift\s*tiga', lambda m: (16, 0)),
+        (r'operasional|ops', lambda m: (11, 0)),
         (r'(\d{1,2}):(\d{2})', lambda m: (int(m.group(1)), int(m.group(2)))),
         (r'jam (\d{1,2})', lambda m: (int(m.group(1)), 0)),
         (r'(\d{1,2}) jam', lambda m: (int(m.group(1)), 0)),
@@ -202,46 +206,24 @@ def create_schedule_actions_keyboard(schedule_id: int) -> InlineKeyboardMarkup:
 def create_shift_selection_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [
-            InlineKeyboardButton('🌙 Night (00:00-08:00)', callback_data='shift_night'),
+            InlineKeyboardButton('🟥 Shift 1 (00:00-08:00)', callback_data='shift_template_1'),
         ],
         [
-            InlineKeyboardButton('☀️ Morning (08:00-16:00)', callback_data='shift_morning'),
+            InlineKeyboardButton('🟩 Shift 2 (08:00-16:00)', callback_data='shift_template_2'),
         ],
         [
-            InlineKeyboardButton('🌆 Evening (16:00-00:00)', callback_data='shift_evening'),
+            InlineKeyboardButton('🟦 Shift 3 (16:00-00:00)', callback_data='shift_template_3'),
         ],
         [
-            InlineKeyboardButton('🔄 Special (11:00-19:00)', callback_data='shift_special'),
+            InlineKeyboardButton('🟨 Operasional (11:00-19:00)', callback_data='shift_template_ops'),
         ],
         [
-            InlineKeyboardButton('🕐 Custom Time', callback_data='shift_custom'),
+            InlineKeyboardButton('⏰ Custom Time', callback_data='shift_custom'),
         ],
         [
             InlineKeyboardButton('❌ Cancel', callback_data='cancel_time'),
         ],
     ]
-    return InlineKeyboardMarkup(keyboard)
-
-def create_hour_selection_keyboard(shift_type: str) -> InlineKeyboardMarkup:
-    shift_hours = {
-        'night': [(0,1,2,3,4,5,6,7)],
-        'morning': [(8,9,10,11), (12,13,14,15)],
-        'evening': [(16,17,18,19), (20,21,22,23)],
-        'special': [(11,12,13,14), (15,16,17,18,19)],
-    }
-    
-    hours = shift_hours.get(shift_type, [(0,1,2,3,4,5,6,7), (8,9,10,11), (12,13,14,15), (16,17,18,19), (20,21,22,23)])
-    
-    keyboard = []
-    for hour_row in hours:
-        row = [InlineKeyboardButton(f'{h:02d}:XX', callback_data=f'hour_{h}') for h in hour_row]
-        keyboard.append(row)
-    
-    keyboard.append([
-        InlineKeyboardButton('⬅️ Back', callback_data='back_shift'),
-        InlineKeyboardButton('❌ Cancel', callback_data='cancel_time'),
-    ])
-    
     return InlineKeyboardMarkup(keyboard)
 
 def create_minute_selection_keyboard(hour: int) -> InlineKeyboardMarkup:
@@ -355,25 +337,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = """
 🎉 **Bot Jadwal Kerja - Shift Bot** 
 
-Bot untuk manajemen jadwal kerja dengan fitur lengkap!
+Bot untuk manajemen jadwal shift kerja dengan fitur lengkap!
+
+**⏰ Shift Template:**
+• 🟥 Shift 1 (00:00-08:00) - Mulai 00:00
+• 🟩 Shift 2 (08:00-16:00) - Mulai 08:00  
+• 🟦 Shift 3 (16:00-00:00) - Mulai 16:00
+• 🟨 Operasional (11:00-19:00) - Mulai 11:00
+• ⏰ Custom Time - Jam fleksibel
 
 **Quick Actions:**
 • ➕ Tambah Jadwal
 • 📋 Lihat semua jadwal  
 • 📅 Jadwal hari ini
 • 🔍 Search jadwal
-• 📊 Filter by date/category
+• 📊 Filter by date
 
 **Natural Language:**
-Ketik: "meeting besok jam 2 siang"
-Bot akan otomatis parse dan create jadwal!
+Ketik: "Shift 1 besok" atau "meeting jam 2 siang"
+Bot akan otomatis parse!
 
 **Commands:**
 /add - Tambah jadwal manual
 /search [keyword] - Cari jadwal
 /filter [start] [end] - Filter by date
-/complete [id] - Tandai selesai
-/settings - Pengaturan
 
 Klik tombol di bawah untuk mulai! 👇
 """
@@ -416,24 +403,27 @@ Deadline 25/04/2026 sore
 • Sore (15:00), Malam (20:00)
 • HH:MM format
 
-**🔔 MULTIPLE REMINDERS:**
-Bot akan remind di:
-• 1 jam sebelum
-• 30 menit sebelum  
-• 15 menit sebelum
+**🔔 REMINDERS:**
+Pilih reminder yang diinginkan:
 • 5 menit sebelum
+• 15 menit sebelum  
+• 30 menit sebelum
+• 1 jam sebelum
+Toggle on/off sesuai kebutuhan!
 
-**📋 MANAGE JADWAL:**
-• /list - Semua jadwal
-• /today - Hari ini
-• /search [keyword] - Cari
-• /filter [start] [end] - Filter tanggal
-• /complete [id] - Tandai selesai
-• /delete [id] - Hapus
+**⏰ SHIFT TEMPLATE:**
+• 🟥 Shift 1: 00:00-08:00 (mulai 00:00)
+• 🟩 Shift 2: 08:00-16:00 (mulai 08:00)
+• 🟦 Shift 3: 16:00-00:00 (mulai 16:00)
+• 🟨 Operasional: 11:00-19:00 (mulai 11:00)
+• ⏰ Custom: jam fleksibel
 
 **📅 INLINE CALENDAR:**
 Klik tombol ➕ Tambah Jadwal
-Pilih tanggal dari calendar visual!
+→ Pilih tanggal di calendar
+→ Pilih shift (jam otomatis)
+→ Toggle reminder
+→ Set!
 
 **Quick Actions tersedia di menu.**
 """
@@ -631,21 +621,41 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id not in user_states:
             user_states[user_id] = {}
         
-        if shift_type == 'custom':
-            msg = "🕐 Pilih jam secara manual:"
+        template_shifts = {
+            'template_1': {'hour': 0, 'name': '🟥 Shift 1 (00:00-08:00)', 'start': '00:00'},
+            'template_2': {'hour': 8, 'name': '🟩 Shift 2 (08:00-16:00)', 'start': '08:00'},
+            'template_3': {'hour': 16, 'name': '🟦 Shift 3 (16:00-00:00)', 'start': '16:00'},
+            'template_ops': {'hour': 11, 'name': '🟨 Operasional (11:00-19:00)', 'start': '11:00'},
+        }
+        
+        if shift_type in template_shifts:
+            shift_info = template_shifts[shift_type]
+            hour = shift_info['hour']
+            
+            date = user_states[user_id].get('date', datetime.now())
+            schedule_time = date.replace(hour=hour, minute=0, second=0, microsecond=0)
+            
+            user_states[user_id]['schedule_time'] = schedule_time
+            user_states[user_id]['waiting_for'] = 'reminder'
+            user_states[user_id]['remind_times'] = ''
+            
+            title = user_states[user_id].get('title', 'Jadwal')
+            
+            msg = f"""
+✅ **{shift_info['name']}**
+
+📝 {title}
+📅 {format_datetime(schedule_time)}
+⏰ Mulai: {shift_info['start']}
+
+🔔 Pilih reminder yang diinginkan:
+"""
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_reminder_selection_keyboard())
+        elif shift_type == 'custom':
+            msg = "⏰ **Custom Time**\n\nPilih jam secara manual:"
             await query.edit_message_text(msg, parse_mode='Markdown',
                                           reply_markup=create_all_hours_keyboard())
-        else:
-            shift_names = {
-                'night': '🌙 Night Shift (00:00-08:00)',
-                'morning': '☀️ Morning Shift (08:00-16:00)',
-                'evening': '🌆 Evening Shift (16:00-00:00)',
-                'special': '🔄 Special Shift (11:00-19:00)'
-            }
-            
-            msg = f"{shift_names.get(shift_type, 'Pilih Jam')}\n\nKlik jam:"
-            await query.edit_message_text(msg, parse_mode='Markdown',
-                                          reply_markup=create_hour_selection_keyboard(shift_type))
         return
     
     if data.startswith('hour_'):
