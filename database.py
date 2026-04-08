@@ -63,7 +63,7 @@ def init_db():
     conn.close()
 
 def add_schedule(user_id: int, title: str, description: str, schedule_time: datetime, 
-                 remind_times: str = '15', recurring_type: str = 'none') -> int:
+                 remind_times: str = '5', recurring_type: str = 'none') -> int:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''

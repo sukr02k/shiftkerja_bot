@@ -68,7 +68,7 @@ def restore_reminders():
             user_id = schedule['user_id']
             title = schedule['title']
             schedule_time = schedule['schedule_time']
-            remind_times = schedule.get('remind_times', '15')
+            remind_times = schedule.get('remind_times', '5')
             
             logger.info(f"Schedule {schedule_id}: time={schedule_time}, remind_times={remind_times}")
             
@@ -480,14 +480,12 @@ def create_all_hours_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 def create_reminder_selection_keyboard(selected_reminders: str = '') -> InlineKeyboardMarkup:
-    reminder_options = [5, 15, 30, 60]
+    reminder_options = [5, 10, 20, 30, 60]
     selected_list = [int(x) for x in selected_reminders.split(',') if x.strip()]
     
     keyboard = []
-    row1 = []
-    row2 = []
     
-    for i, rem in enumerate(reminder_options):
+    for rem in reminder_options:
         is_selected = rem in selected_list
         
         if rem == 60:
@@ -500,15 +498,9 @@ def create_reminder_selection_keyboard(selected_reminders: str = '') -> InlineKe
         else:
             btn_text = f'⬜ {label}'
         
-        callback_data = f'toggle_rem_{rem}'
-        
-        if i < 2:
-            row1.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
-        else:
-            row2.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f'toggle_rem_{rem}')])
     
-    keyboard.append(row1)
-    keyboard.append(row2)
+    keyboard.append([InlineKeyboardButton('✏️ Custom (Manual)', callback_data='custom_reminder')])
     
     if selected_list:
         selected_str = ', '.join([f'{x} min' if x != 60 else '1 hour' for x in sorted(selected_list, reverse=True)])
@@ -683,6 +675,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(msg, parse_mode='Markdown',
                                                 reply_markup=create_reminder_selection_keyboard())
                 return
+        
+        elif state.get('waiting_for') == 'custom_reminder_minutes':
+            try:
+                minutes = [int(x.strip()) for x in text.split(',') if x.strip().isdigit()]
+                if minutes:
+                    minutes.sort(reverse=True)
+                    state['remind_times'] = ','.join([str(x) for x in minutes])
+                    state['waiting_for'] = 'reminder'
+                    
+                    remind_str = ', '.join([f'{x} min' for x in minutes])
+                    msg = f"✅ Custom reminder set: {remind_str}\n\nKlik Set untuk konfirmasi atau pilih lain:"
+                    await update.message.reply_text(msg, parse_mode='Markdown',
+                                                    reply_markup=create_reminder_selection_keyboard(state['remind_times']))
+                else:
+                    await update.message.reply_text(
+                        "❌ Format salah. Ketik angka menit (contoh: 5 atau 3,7,45)",
+                        parse_mode='Markdown'
+                    )
+            except Exception as e:
+                await update.message.reply_text(
+                    "❌ Format salah. Ketik angka menit (contoh: 5 atau 3,7,45)",
+                    parse_mode='Markdown'
+                )
+            return
         
         elif state.get('waiting_for') == 'search':
             keyword = text.strip()
@@ -1028,6 +1044,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await query.edit_message_reply_markup(
                 reply_markup=create_reminder_selection_keyboard(user_states[user_id]['remind_times'])
+            )
+        return
+    
+    if data == 'custom_reminder':
+        if user_id in user_states:
+            user_states[user_id]['waiting_for'] = 'custom_reminder_minutes'
+            await query.edit_message_text(
+                "✏️ Ketik jumlah menit untuk reminder (contoh: 3, 7, 45):\n\n"
+                "Bisa multiple dengan koma: 3,7,45"
             )
         return
     
@@ -1460,8 +1485,8 @@ Pilih reminder sesuai kebutuhan saat membuat jadwal.
         rem_time = int(data.replace('rem_', '').replace('min', '').replace('hour', '60'))
         
         if user_id in user_states:
-            current_rem = user_states[user_id].get('remind_times', '15')
-            rem_list = [int(x) for x in current_rem.split(',')]
+            current_rem = user_states[user_id].get('remind_times', '5')
+            rem_list = [int(x) for x in current_rem.split(',') if x.strip()]
             
             if rem_time not in rem_list:
                 rem_list.append(rem_time)
@@ -1469,8 +1494,8 @@ Pilih reminder sesuai kebutuhan saat membuat jadwal.
                 user_states[user_id]['remind_times'] = ','.join([str(x) for x in rem_list])
         
         await query.edit_message_text(
-            f"✅ Reminder {rem_time} min ditambahkan.\n\nCurrent reminders: {user_states[user_id].get('remind_times', '15')}",
-            reply_markup=create_reminder_options_keyboard()
+            f"✅ Reminder {rem_time} min ditambahkan.\n\nCurrent reminders: {user_states[user_id].get('remind_times', '5')}",
+            reply_markup=create_reminder_selection_keyboard(user_states[user_id].get('remind_times', '5'))
         )
         return
 
