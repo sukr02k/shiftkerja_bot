@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Optional
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'schedules.db')
+DB_PATH = os.environ.get('DB_PATH', os.path.join(os.path.dirname(__file__), 'schedules.db'))
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
