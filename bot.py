@@ -833,11 +833,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "📋 **Daftar Jadwal Anda:**\n\n"
         for i, s in enumerate(schedules, 1):
             status_emoji = '✅' if s['status'] == 'completed' else '⏳'
-            priority_emoji = {'high': '🔴', 'medium': '🟡', 'low': '🟢'}.get(s['priority'], '⚪')
             
-            msg += f"{i}. {status_emoji} {priority_emoji} **{s['title']}**\n"
+            msg += f"{i}. {status_emoji} **{s['title']}**\n"
             msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
-            msg += f"   📁 {s['category']} | ID: {s['id']}\n\n"
+            msg += f"   ID: {s['id']}\n\n"
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
@@ -888,22 +887,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = """
 ⚙️ **Settings**
 
-**🔔 Reminder Default:**
-60 min, 30 min, 15 min, 5 min
+**🔔 Reminder Options:**
+• 5 min
+• 15 min
+• 30 min
+• 1 hour
 
-**📁 Categories Available:**
-• general
-• work
-• meeting
-• deadline
-• personal
-
-**🔴 Priority Levels:**
-• high
-• medium
-• low
-
-Settings dapat di-custom saat create jadwal.
+Pilih reminder sesuai kebutuhan saat membuat jadwal.
 """
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
@@ -1131,11 +1121,10 @@ async def list_schedules_command(update: Update, context: ContextTypes.DEFAULT_T
     msg = "📋 **Daftar Jadwal Anda:**\n\n"
     for i, s in enumerate(schedules, 1):
         status_emoji = '✅' if s['status'] == 'completed' else '⏳'
-        priority_emoji = {'high': '🔴', 'medium': '🟡', 'low': '🟢'}.get(s['priority'], '⚪')
         
-        msg += f"{i}. {status_emoji} {priority_emoji} **{s['title']}**\n"
+        msg += f"{i}. {status_emoji} **{s['title']}**\n"
         msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
-        msg += f"   📁 {s['category']} | ID: {s['id']}\n\n"
+        msg += f"   ID: {s['id']}\n\n"
     
     msg += "Hapus dengan `/delete [id]`"
     await update.message.reply_text(msg, parse_mode='Markdown')
