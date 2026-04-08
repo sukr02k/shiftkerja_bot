@@ -103,8 +103,6 @@ def restore_reminders():
     except Exception as e:
         logger.error(f"Error restoring reminders: {e}")
 
-restore_reminders()
-
 def get_smart_status(schedule: dict) -> str:
     now = get_local_now()
     schedule_time = schedule['schedule_time']
@@ -1845,6 +1843,7 @@ async def clear_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     database.init_db()
+    restore_reminders()
     
     app = Application.builder().token(BOT_TOKEN).build()
     
