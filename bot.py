@@ -111,10 +111,7 @@ def get_smart_status(schedule: dict) -> str:
     if status == 'completed':
         return '✅'
     
-    if now > schedule_time + timedelta(hours=1):
-        return '⏰'
-    
-    if now > schedule_time:
+    if now >= schedule_time:
         return '⏱️'
     
     return '⏳'
@@ -127,19 +124,33 @@ def get_status_text(schedule: dict) -> str:
     if status == 'completed':
         return '✅ Selesai'
     
-    if now > schedule_time + timedelta(hours=1):
-        return '⏰ Terlewat (auto-complete dalam 30 min)'
-    
-    if now > schedule_time:
+    if now >= schedule_time:
         return '⏱️ Sedang berlangsung'
     
     return '⏳ Menunggu'
 
-def format_datetime(dt: datetime) -> str:
+def format_datetime(dt: datetime, shift_info: str = '') -> str:
     days = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     day_name = days[dt.weekday()]
     month_name = months[dt.month - 1]
+    
+    if shift_info:
+        return f"{day_name}, {dt.day} {month_name} {dt.year} - {shift_info}"
+    
+    return f"{day_name}, {dt.day} {month_name} {dt.year} - {dt.hour:02d}:{dt.minute:02d}"
+
+def format_schedule_display(schedule: dict) -> str:
+    days = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    dt = schedule['schedule_time']
+    day_name = days[dt.weekday()]
+    month_name = months[dt.month - 1]
+    
+    description = schedule.get('description', '')
+    if description and 'Shift' in description or 'Operasional' in description:
+        return f"{day_name}, {dt.day} {month_name} {dt.year} - {description}"
+    
     return f"{day_name}, {dt.day} {month_name} {dt.year} - {dt.hour:02d}:{dt.minute:02d}"
 
 def parse_time_natural(text: str) -> tuple:
@@ -423,9 +434,13 @@ def create_minute_selection_keyboard(hour: int) -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(f'{hour:02d}:00', callback_data=f'time_{hour:02d}:00'),
-            InlineKeyboardButton(f'{hour:02d}:15', callback_data=f'time_{hour:02d}:15'),
+            InlineKeyboardButton(f'{hour:02d}:10', callback_data=f'time_{hour:02d}:10'),
+            InlineKeyboardButton(f'{hour:02d}:20', callback_data=f'time_{hour:02d}:20'),
+        ],
+        [
             InlineKeyboardButton(f'{hour:02d}:30', callback_data=f'time_{hour:02d}:30'),
-            InlineKeyboardButton(f'{hour:02d}:45', callback_data=f'time_{hour:02d}:45'),
+            InlineKeyboardButton(f'{hour:02d}:40', callback_data=f'time_{hour:02d}:40'),
+            InlineKeyboardButton(f'{hour:02d}:50', callback_data=f'time_{hour:02d}:50'),
         ],
         [
             InlineKeyboardButton('⬅️ Back', callback_data=f'back_hour_{hour}'),
@@ -606,11 +621,10 @@ Klik tombol ➕ Tambah Jadwal
 
 **📊 STATUS SYSTEM:**
 • ⏳ Menunggu - Belum waktunya
-• ⏱️ Berlangsung - Sedang berlangsung
-• ⏰ Terlewat - Sudah lewat 1 jam (auto-complete)
-• ✅ Selesai - Manual atau auto-complete
+• ⏱️ Berlangsung - Sedang berlangsung saat ini
+• ✅ Selesai - Ditandai selesai manual atau auto-complete
 
-Auto-complete berjalan setiap 30 menit untuk update status jadwal yang sudah terlewat.
+Auto-complete berjalan setiap 30 menit untuk jadwal yang sudah lewat 1 jam.
 
 **Quick Actions tersedia di menu.**
 """
@@ -715,7 +729,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for i, s in enumerate(schedules, 1):
                     status_emoji = '✅' if s['status'] == 'completed' else '⏳'
                     msg += f"{i}. {status_emoji} **{s['title']}**\n"
-                    msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+                    msg += f"   📅 {format_schedule_display(s)}\n"
                     msg += f"   ID: {s['id']}\n\n"
                 
                 await update.message.reply_text(msg, parse_mode='Markdown',
@@ -785,7 +799,7 @@ Contoh:
                         for i, s in enumerate(schedules, 1):
                             status_emoji = '✅' if s['status'] == 'completed' else '⏳'
                             msg += f"{i}. {status_emoji} **{s['title']}**\n"
-                            msg += f"   📅 {format_datetime(s['schedule_time'])}\n\n"
+                            msg += f"   📅 {format_schedule_display(s)}\n\n"
                         
                         await update.message.reply_text(msg, parse_mode='Markdown',
                                                         reply_markup=create_main_menu())
@@ -952,6 +966,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_states[user_id]['schedule_time'] = schedule_time
             user_states[user_id]['waiting_for'] = 'reminder'
             user_states[user_id]['remind_times'] = ''
+            user_states[user_id]['shift_info'] = shift_info['name']
             
             title = user_states[user_id].get('title', 'Jadwal')
             
@@ -959,8 +974,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ✅ **{shift_info['name']}**
 
 📝 {title}
-📅 {format_datetime(schedule_time)}
-⏰ Mulai: {shift_info['start']}
 
 🔔 Pilih reminder yang diinginkan:
 """
@@ -1065,9 +1078,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             schedule_time = user_states[user_id].get('schedule_time', datetime.now())
             title = user_states[user_id].get('title', 'Jadwal')
+            shift_info = user_states[user_id].get('shift_info', '')
             
             schedule_id = database.add_schedule(
-                user_id, title, "", schedule_time,
+                user_id, title, shift_info, schedule_time,
                 remind_times=remind_times
             )
             
@@ -1091,7 +1105,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ✅ **Jadwal berhasil ditambahkan!**
 
 📝 {title}
-📅 {format_datetime(schedule_time)}
+📅 {format_datetime(schedule_time, shift_info)}
 
 🔔 Reminder: {remind_str} sebelum
 """
@@ -1104,9 +1118,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id in user_states:
             schedule_time = user_states[user_id].get('schedule_time', datetime.now())
             title = user_states[user_id].get('title', 'Jadwal')
+            shift_info = user_states[user_id].get('shift_info', '')
             
             schedule_id = database.add_schedule(
-                user_id, title, "", schedule_time,
+                user_id, title, shift_info, schedule_time,
                 remind_times=''
             )
             
@@ -1114,7 +1129,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ✅ **Jadwal berhasil ditambahkan!**
 
 📝 {title}
-📅 {format_datetime(schedule_time)}
+📅 {format_datetime(schedule_time, shift_info)}
 
 🔔 No reminder set
 """
@@ -1165,14 +1180,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         msg = "📋 **Daftar Jadwal Anda:**\n\n"
-        msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ⏰ Terlewat | ✅ Selesai\n\n"
+        msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ✅ Selesai\n\n"
         
         for i, s in enumerate(schedules, 1):
             status_emoji = get_smart_status(s)
             status_text = get_status_text(s)
             
             msg += f"{i}. {status_emoji} **{s['title']}**\n"
-            msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+            msg += f"   📅 {format_schedule_display(s)}\n"
             msg += f"   📊 {status_text}\n"
             msg += f"   ID: {s['id']}\n\n"
         
@@ -1191,7 +1206,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         msg = "📅 **Jadwal Hari Ini:**\n\n"
-        msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ⏰ Terlewat | ✅ Selesai\n\n"
+        msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ✅ Selesai\n\n"
         
         for i, s in enumerate(schedules, 1):
             status_emoji = get_smart_status(s)
@@ -1266,7 +1281,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for i, s in enumerate(filtered, 1):
                     status_emoji = '✅' if s['status'] == 'completed' else '⏳'
                     msg += f"{i}. {status_emoji} **{s['title']}**\n"
-                    msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+                    msg += f"   📅 {format_schedule_display(s)}\n"
             
             await query.edit_message_text(msg, parse_mode='Markdown',
                                           reply_markup=create_main_menu())
@@ -1281,7 +1296,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = f"⏳ **Pending Jadwal ({len(schedules)} items):**\n\n"
             for i, s in enumerate(schedules, 1):
                 msg += f"{i}. **{s['title']}**\n"
-                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+                msg += f"   📅 {format_schedule_display(s)}\n"
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
@@ -1296,7 +1311,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = f"✅ **Completed Jadwal ({len(schedules)} items):**\n\n"
             for i, s in enumerate(schedules, 1):
                 msg += f"{i}. **{s['title']}**\n"
-                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+                msg += f"   📅 {format_schedule_display(s)}\n"
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
@@ -1312,7 +1327,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i, s in enumerate(schedules, 1):
                 status_emoji = '✅' if s['status'] == 'completed' else '⏳'
                 msg += f"{i}. {status_emoji} **{s['title']}**\n"
-                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+                msg += f"   📅 {format_schedule_display(s)}\n"
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
@@ -1329,7 +1344,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = "📭 Tidak ada jadwal hari ini."
         else:
             msg = f"📅 **Jadwal Hari Ini ({today.strftime('%d/%m/%Y')}):**\n\n"
-            msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ⏰ Terlewat | ✅ Selesai\n\n"
+            msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ✅ Selesai\n\n"
             for i, s in enumerate(schedules, 1):
                 status_emoji = get_smart_status(s)
                 time_only = s['schedule_time'].strftime('%H:%M')
@@ -1354,7 +1369,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i, s in enumerate(schedules, 1):
                 status_emoji = '✅' if s['status'] == 'completed' else '⏳'
                 msg += f"{i}. {status_emoji} **{s['title']}**\n"
-                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+                msg += f"   📅 {format_schedule_display(s)}\n"
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
@@ -1377,7 +1392,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i, s in enumerate(schedules, 1):
                 status_emoji = get_smart_status(s)
                 msg += f"{i}. {status_emoji} **{s['title']}**\n"
-                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+                msg += f"   📅 {format_schedule_display(s)}\n"
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
@@ -1689,7 +1704,7 @@ async def list_schedules_command(update: Update, context: ContextTypes.DEFAULT_T
         status_emoji = '✅' if s['status'] == 'completed' else '⏳'
         
         msg += f"{i}. {status_emoji} **{s['title']}**\n"
-        msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+        msg += f"   📅 {format_schedule_display(s)}\n"
         msg += f"   ID: {s['id']}\n\n"
     
     msg += "Hapus dengan `/delete [id]`"
@@ -1738,7 +1753,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"🔍 **Hasil Search '{keyword}':**\n\n"
     for i, s in enumerate(schedules, 1):
         msg += f"{i}. **{s['title']}**\n"
-        msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+        msg += f"   📅 {format_schedule_display(s)}\n"
         msg += f"   ID: {s['id']}\n\n"
     
     await update.message.reply_text(msg, parse_mode='Markdown')
@@ -1784,7 +1799,7 @@ async def filter_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = f"📊 **Jadwal {start_str} - {end_str}:**\n\n"
         for i, s in enumerate(schedules, 1):
             msg += f"{i}. **{s['title']}**\n"
-            msg += f"   📅 {format_datetime(s['schedule_time'])}\n\n"
+            msg += f"   📅 {format_schedule_display(s)}\n\n"
         
         await update.message.reply_text(msg, parse_mode='Markdown')
         
