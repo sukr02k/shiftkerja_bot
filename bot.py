@@ -7,6 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 import database
 
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +19,67 @@ scheduler = BackgroundScheduler()
 scheduler.start()
 
 user_states = {}
+
+def auto_complete_expired_schedules():
+    conn = None
+    try:
+        now = datetime.now()
+        grace_period = timedelta(hours=1)
+        
+        all_schedules = database.get_all_pending_schedules()
+        
+        for schedule in all_schedules:
+            schedule_time = schedule['schedule_time']
+            schedule_id = schedule['id']
+            user_id = schedule['user_id']
+            
+            if now > schedule_time + grace_period:
+                database.update_schedule_status(user_id, schedule_id, 'completed')
+                logger.info(f"Auto-completed schedule {schedule_id} - {schedule['title']}")
+    
+    except Exception as e:
+        logger.error(f"Error in auto_complete: {e}")
+
+scheduler.add_job(
+    auto_complete_expired_schedules,
+    trigger=IntervalTrigger(minutes=30),
+    id='auto_complete_job',
+    replace_existing=True
+)
+
+logger.info("Auto-complete scheduler started - runs every 30 minutes")
+
+def get_smart_status(schedule: dict) -> str:
+    now = datetime.now()
+    schedule_time = schedule['schedule_time']
+    status = schedule.get('status', 'pending')
+    
+    if status == 'completed':
+        return '✅'
+    
+    if now > schedule_time + timedelta(hours=1):
+        return '⏰'
+    
+    if now > schedule_time:
+        return '⏱️'
+    
+    return '⏳'
+
+def get_status_text(schedule: dict) -> str:
+    now = datetime.now()
+    schedule_time = schedule['schedule_time']
+    status = schedule.get('status', 'pending')
+    
+    if status == 'completed':
+        return '✅ Selesai'
+    
+    if now > schedule_time + timedelta(hours=1):
+        return '⏰ Terlewat (auto-complete dalam 30 min)'
+    
+    if now > schedule_time:
+        return '⏱️ Sedang berlangsung'
+    
+    return '⏳ Menunggu'
 
 def format_datetime(dt: datetime) -> str:
     days = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']
@@ -492,6 +554,14 @@ Klik tombol ➕ Tambah Jadwal
 → Pilih shift (jam otomatis)
 → Toggle reminder
 → Set!
+
+**📊 STATUS SYSTEM:**
+• ⏳ Menunggu - Belum waktunya
+• ⏱️ Berlangsung - Sedang berlangsung
+• ⏰ Terlewat - Sudah lewat 1 jam (auto-complete)
+• ✅ Selesai - Manual atau auto-complete
+
+Auto-complete berjalan setiap 30 menit untuk update status jadwal yang sudah terlewat.
 
 **Quick Actions tersedia di menu.**
 """
@@ -1002,11 +1072,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         msg = "📋 **Daftar Jadwal Anda:**\n\n"
+        msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ⏰ Terlewat | ✅ Selesai\n\n"
+        
         for i, s in enumerate(schedules, 1):
-            status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+            status_emoji = get_smart_status(s)
+            status_text = get_status_text(s)
             
             msg += f"{i}. {status_emoji} **{s['title']}**\n"
             msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+            msg += f"   📊 {status_text}\n"
             msg += f"   ID: {s['id']}\n\n"
         
         await query.edit_message_text(msg, parse_mode='Markdown',
@@ -1024,11 +1098,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         msg = "📅 **Jadwal Hari Ini:**\n\n"
+        msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ⏰ Terlewat | ✅ Selesai\n\n"
+        
         for i, s in enumerate(schedules, 1):
-            status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+            status_emoji = get_smart_status(s)
             time_only = f"{s['schedule_time'].hour:02d}:{s['schedule_time'].minute:02d}"
-            msg += f"{i}. {status_emoji} **{s['title']}**\n"
-            msg += f"   🕐 {time_only}\n\n"
+            msg += f"{i}. {status_emoji} **{s['title']}** - {time_only}\n"
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
