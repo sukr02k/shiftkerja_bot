@@ -15,34 +15,89 @@ def init_db():
             title TEXT NOT NULL,
             description TEXT,
             schedule_time TEXT NOT NULL,
-            remind_before INTEGER DEFAULT 15,
+            remind_times TEXT DEFAULT '15',
+            category TEXT DEFAULT 'general',
+            priority TEXT DEFAULT 'medium',
+            status TEXT DEFAULT 'pending',
+            recurring_type TEXT DEFAULT 'none',
             created_at TEXT NOT NULL
         )
     ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS reminders_sent (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER NOT NULL,
+            reminder_time TEXT NOT NULL,
+            sent_at TEXT NOT NULL
+        )
+    ''')
+    
+    try:
+        cursor.execute('ALTER TABLE schedules ADD COLUMN remind_times TEXT DEFAULT "15"')
+    except:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE schedules ADD COLUMN category TEXT DEFAULT "general"')
+    except:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE schedules ADD COLUMN priority TEXT DEFAULT "medium"')
+    except:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE schedules ADD COLUMN status TEXT DEFAULT "pending"')
+    except:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE schedules ADD COLUMN recurring_type TEXT DEFAULT "none"')
+    except:
+        pass
+    
     conn.commit()
     conn.close()
 
-def add_schedule(user_id: int, title: str, description: str, schedule_time: datetime, remind_before: int = 15) -> int:
+def add_schedule(user_id: int, title: str, description: str, schedule_time: datetime, 
+                 remind_times: str = '15', category: str = 'general', 
+                 priority: str = 'medium', recurring_type: str = 'none') -> int:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO schedules (user_id, title, description, schedule_time, remind_before, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (user_id, title, description, schedule_time.isoformat(), remind_before, datetime.now().isoformat()))
+        INSERT INTO schedules (user_id, title, description, schedule_time, remind_times, 
+                              category, priority, status, recurring_type, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (user_id, title, description, schedule_time.isoformat(), remind_times, 
+          category, priority, 'pending', recurring_type, datetime.now().isoformat()))
     schedule_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return schedule_id
 
-def get_user_schedules(user_id: int) -> List[dict]:
+def get_user_schedules(user_id: int, status: str = None) -> List[dict]:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT id, title, description, schedule_time, remind_before
-        FROM schedules
-        WHERE user_id = ?
-        ORDER BY schedule_time ASC
-    ''', (user_id,))
+    
+    if status:
+        cursor.execute('''
+            SELECT id, title, description, schedule_time, remind_times, category, 
+                   priority, status, recurring_type
+            FROM schedules
+            WHERE user_id = ? AND status = ?
+            ORDER BY schedule_time ASC
+        ''', (user_id, status))
+    else:
+        cursor.execute('''
+            SELECT id, title, description, schedule_time, remind_times, category, 
+                   priority, status, recurring_type
+            FROM schedules
+            WHERE user_id = ?
+            ORDER BY schedule_time ASC
+        ''', (user_id,))
+    
     rows = cursor.fetchall()
     conn.close()
     
@@ -53,7 +108,11 @@ def get_user_schedules(user_id: int) -> List[dict]:
             'title': row[1],
             'description': row[2],
             'schedule_time': datetime.fromisoformat(row[3]),
-            'remind_before': row[4]
+            'remind_times': row[4],
+            'category': row[5],
+            'priority': row[6],
+            'status': row[7],
+            'recurring_type': row[8]
         })
     return schedules
 
@@ -62,7 +121,8 @@ def get_today_schedules(user_id: int) -> List[dict]:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT id, title, description, schedule_time, remind_before
+        SELECT id, title, description, schedule_time, remind_times, category, 
+               priority, status, recurring_type
         FROM schedules
         WHERE user_id = ? AND DATE(schedule_time) = ?
         ORDER BY schedule_time ASC
@@ -77,7 +137,11 @@ def get_today_schedules(user_id: int) -> List[dict]:
             'title': row[1],
             'description': row[2],
             'schedule_time': datetime.fromisoformat(row[3]),
-            'remind_before': row[4]
+            'remind_times': row[4],
+            'category': row[5],
+            'priority': row[6],
+            'status': row[7],
+            'recurring_type': row[8]
         })
     return schedules
 
@@ -94,9 +158,10 @@ def get_all_pending_schedules() -> List[dict]:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT id, user_id, title, description, schedule_time, remind_before
+        SELECT id, user_id, title, description, schedule_time, remind_times, 
+               category, priority, status, recurring_type
         FROM schedules
-        WHERE schedule_time > ?
+        WHERE schedule_time > ? AND status = 'pending'
         ORDER BY schedule_time ASC
     ''', (datetime.now().isoformat(),))
     rows = cursor.fetchall()
@@ -110,9 +175,158 @@ def get_all_pending_schedules() -> List[dict]:
             'title': row[2],
             'description': row[3],
             'schedule_time': datetime.fromisoformat(row[4]),
-            'remind_before': row[5]
+            'remind_times': row[5],
+            'category': row[6],
+            'priority': row[7],
+            'status': row[8],
+            'recurring_type': row[9]
         })
     return schedules
+
+def search_schedules(user_id: int, keyword: str) -> List[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id, title, description, schedule_time, remind_times, category, 
+               priority, status, recurring_type
+        FROM schedules
+        WHERE user_id = ? AND (title LIKE ? OR description LIKE ?)
+        ORDER BY schedule_time ASC
+    ''', (user_id, f'%{keyword}%', f'%{keyword}%'))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    schedules = []
+    for row in rows:
+        schedules.append({
+            'id': row[0],
+            'title': row[1],
+            'description': row[2],
+            'schedule_time': datetime.fromisoformat(row[3]),
+            'remind_times': row[4],
+            'category': row[5],
+            'priority': row[6],
+            'status': row[7],
+            'recurring_type': row[8]
+        })
+    return schedules
+
+def get_schedules_by_date_range(user_id: int, start_date: datetime, end_date: datetime) -> List[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id, title, description, schedule_time, remind_times, category, 
+               priority, status, recurring_type
+        FROM schedules
+        WHERE user_id = ? AND schedule_time >= ? AND schedule_time <= ?
+        ORDER BY schedule_time ASC
+    ''', (user_id, start_date.isoformat(), end_date.isoformat()))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    schedules = []
+    for row in rows:
+        schedules.append({
+            'id': row[0],
+            'title': row[1],
+            'description': row[2],
+            'schedule_time': datetime.fromisoformat(row[3]),
+            'remind_times': row[4],
+            'category': row[5],
+            'priority': row[6],
+            'status': row[7],
+            'recurring_type': row[8]
+        })
+    return schedules
+
+def get_schedules_by_category(user_id: int, category: str) -> List[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id, title, description, schedule_time, remind_times, category, 
+               priority, status, recurring_type
+        FROM schedules
+        WHERE user_id = ? AND category = ?
+        ORDER BY schedule_time ASC
+    ''', (user_id, category))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    schedules = []
+    for row in rows:
+        schedules.append({
+            'id': row[0],
+            'title': row[1],
+            'description': row[2],
+            'schedule_time': datetime.fromisoformat(row[3]),
+            'remind_times': row[4],
+            'category': row[5],
+            'priority': row[6],
+            'status': row[7],
+            'recurring_type': row[8]
+        })
+    return schedules
+
+def update_schedule_status(user_id: int, schedule_id: int, status: str) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE schedules 
+        SET status = ? 
+        WHERE id = ? AND user_id = ?
+    ''', (status, schedule_id, user_id))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+def get_schedule_by_id(schedule_id: int) -> Optional[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id, user_id, title, description, schedule_time, remind_times, 
+               category, priority, status, recurring_type
+        FROM schedules
+        WHERE id = ?
+    ''', (schedule_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return {
+            'id': row[0],
+            'user_id': row[1],
+            'title': row[2],
+            'description': row[3],
+            'schedule_time': datetime.fromisoformat(row[4]),
+            'remind_times': row[5],
+            'category': row[6],
+            'priority': row[7],
+            'status': row[8],
+            'recurring_type': row[9]
+        }
+    return None
+
+def mark_reminder_sent(schedule_id: int, reminder_time: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO reminders_sent (schedule_id, reminder_time, sent_at)
+        VALUES (?, ?, ?)
+    ''', (schedule_id, reminder_time, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def get_sent_reminders(schedule_id: int) -> List[str]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT reminder_time FROM reminders_sent
+        WHERE schedule_id = ?
+    ''', (schedule_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
 
 def delete_schedule_by_id(schedule_id: int) -> bool:
     conn = sqlite3.connect(DB_PATH)
