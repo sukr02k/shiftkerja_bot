@@ -125,7 +125,7 @@ def parse_time_natural(text: str) -> tuple:
 
 def parse_date_natural(text: str) -> datetime:
     text = text.lower()
-    now = datetime.now()
+    now = get_local_now()
     
     if 'hari ini' in text or 'today' in text:
         return now
@@ -170,7 +170,7 @@ def parse_date_natural(text: str) -> datetime:
 
 def parse_relative_time(text: str) -> datetime:
     text = text.lower()
-    now = datetime.now()
+    now = get_local_now()
     
     patterns = [
         (r'in (\d+) minutes|(\d+) menit lagi', 'minutes'),
@@ -998,7 +998,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for rem_time in [int(x) for x in remind_times.split(',')]:
                 reminder_datetime = schedule_time - timedelta(minutes=rem_time)
-                if reminder_datetime > datetime.now():
+                if reminder_datetime > get_local_now():
                     scheduler.add_job(
                         send_reminder,
                         trigger=DateTrigger(run_date=reminder_datetime),
@@ -1006,6 +1006,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         id=f'reminder_{schedule_id}_{rem_time}',
                         replace_existing=True
                     )
+                    logger.info(f"Scheduled reminder for schedule {schedule_id} at {reminder_datetime}")
             
             remind_str = ', '.join([f'{x} min' for x in remind_times.split(',')])
             msg = f"""
@@ -1233,7 +1234,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == 'filter_today':
-        today = datetime.now().date()
+        today = get_local_now().date()
         start_date = datetime.combine(today, datetime.min.time())
         end_date = datetime.combine(today, datetime.max.time())
         
@@ -1243,8 +1244,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = "📭 Tidak ada jadwal hari ini."
         else:
             msg = f"📅 **Jadwal Hari Ini ({today.strftime('%d/%m/%Y')}):**\n\n"
+            msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ⏰ Terlewat | ✅ Selesai\n\n"
             for i, s in enumerate(schedules, 1):
-                status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+                status_emoji = get_smart_status(s)
                 time_only = s['schedule_time'].strftime('%H:%M')
                 msg += f"{i}. {status_emoji} **{s['title']}** - {time_only}\n"
         
@@ -1253,7 +1255,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == 'filter_week':
-        today = datetime.now()
+        today = get_local_now()
         start_week = today - timedelta(days=today.weekday())
         start_date = datetime.combine(start_week.date(), datetime.min.time())
         end_date = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59)
@@ -1274,7 +1276,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == 'filter_month':
-        today = datetime.now()
+        today = get_local_now()
         start_date = datetime(today.year, today.month, 1)
         if today.month == 12:
             end_date = datetime(today.year + 1, 1, 1) - timedelta(seconds=1)
@@ -1288,7 +1290,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             msg = f"🗓️ **Jadwal Bulan Ini ({today.strftime('%B %Y')}):**\n\n"
             for i, s in enumerate(schedules, 1):
-                status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+                status_emoji = get_smart_status(s)
                 msg += f"{i}. {status_emoji} **{s['title']}**\n"
                 msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
         
@@ -1489,7 +1491,7 @@ async def add_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYP
     title_parts = args[:-2]
     title = ' '.join(title_parts)
     
-    now = datetime.now()
+    now = get_local_now()
     schedule_time = None
     
     days_mapping = {
@@ -1648,7 +1650,7 @@ async def filter_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         start_str = context.args[0]
         end_str = context.args[1]
         
-        now = datetime.now()
+        now = get_local_now()
         
         if '/' in start_str:
             parts = start_str.split('/')
