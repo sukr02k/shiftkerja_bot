@@ -60,6 +60,7 @@ logger.info("Auto-complete scheduler started - runs every 30 minutes")
 def restore_reminders():
     try:
         pending_schedules = database.get_all_pending_schedules()
+        logger.info(f"Found {len(pending_schedules)} pending schedules to restore")
         restored_count = 0
         
         for schedule in pending_schedules:
@@ -69,6 +70,8 @@ def restore_reminders():
             schedule_time = schedule['schedule_time']
             remind_times = schedule.get('remind_times', '15')
             
+            logger.info(f"Schedule {schedule_id}: time={schedule_time}, remind_times={remind_times}")
+            
             if not remind_times:
                 continue
             
@@ -76,9 +79,12 @@ def restore_reminders():
             
             for rem_time in [int(x) for x in remind_times.split(',')]:
                 if str(rem_time) in sent_reminders:
+                    logger.info(f"Reminder {rem_time} already sent for schedule {schedule_id}")
                     continue
                     
                 reminder_datetime = schedule_time - timedelta(minutes=rem_time)
+                
+                logger.info(f"Reminder {rem_time} min: reminder_time={reminder_datetime}, now={get_local_now()}")
                 
                 if reminder_datetime > get_local_now():
                     scheduler.add_job(
@@ -90,6 +96,8 @@ def restore_reminders():
                     )
                     restored_count += 1
                     logger.info(f"Restored reminder for schedule {schedule_id} at {reminder_datetime}")
+                else:
+                    logger.info(f"Skipped reminder {rem_time} for schedule {schedule_id} - time already passed")
         
         logger.info(f"Restored {restored_count} reminders from database")
     except Exception as e:
@@ -1042,6 +1050,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for rem_time in [int(x) for x in remind_times.split(',')]:
                 reminder_datetime = schedule_time - timedelta(minutes=rem_time)
+                logger.info(f"Checking reminder {rem_time} min: reminder_time={reminder_datetime}, now={get_local_now()}, should_schedule={reminder_datetime > get_local_now()}")
                 if reminder_datetime > get_local_now():
                     scheduler.add_job(
                         send_reminder_sync,
@@ -1051,6 +1060,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         replace_existing=True
                     )
                     logger.info(f"Scheduled reminder for schedule {schedule_id} at {reminder_datetime}")
+                else:
+                    logger.info(f"Skipped reminder {rem_time} min - time already passed")
             
             remind_str = ', '.join([f'{x} min' for x in remind_times.split(',')])
             msg = f"""
@@ -1466,6 +1477,7 @@ Pilih reminder sesuai kebutuhan saat membuat jadwal.
         return
 
 def send_reminder_sync(user_id: int, schedule_id: int, title: str, schedule_time: datetime, rem_minutes: int):
+    logger.info(f"send_reminder_sync called for schedule {schedule_id}, reminder {rem_minutes} min")
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1475,8 +1487,11 @@ def send_reminder_sync(user_id: int, schedule_id: int, title: str, schedule_time
         logger.error(f"Error in send_reminder_sync: {e}")
 
 async def send_reminder(user_id: int, schedule_id: int, title: str, schedule_time: datetime, rem_minutes: int):
+    app = None
     try:
         app = Application.builder().token(BOT_TOKEN).build()
+        await app.initialize()
+        await app.start()
         
         schedule = database.get_schedule_by_id(schedule_id)
         if schedule and schedule['status'] == 'completed':
@@ -1504,6 +1519,13 @@ Jadwal akan dimulai dalam **{rem_minutes} menit**!
         logger.info(f"Reminder {rem_minutes} min sent for schedule {schedule_id} to user {user_id}")
     except Exception as e:
         logger.error(f"Failed to send reminder: {e}")
+    finally:
+        if app:
+            try:
+                await app.stop()
+                await app.shutdown()
+            except:
+                pass
 
 async def add_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Received add command from user {update.effective_user.id}: {context.args}")
