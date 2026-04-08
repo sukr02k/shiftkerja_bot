@@ -170,7 +170,44 @@ def create_calendar_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
     
     return InlineKeyboardMarkup(keyboard)
 
-def create_filter_keyboard() -> InlineKeyboardMarkup:
+def create_filter_main_keyboard() -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton('⏰ Filter by Shift', callback_data='filter_shift'),
+        ],
+        [
+            InlineKeyboardButton('📅 Filter by Time', callback_data='filter_time'),
+        ],
+        [
+            InlineKeyboardButton('✅ Filter by Status', callback_data='filter_status'),
+        ],
+        [
+            InlineKeyboardButton('⬅️ Back to Menu', callback_data='show_menu'),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def create_filter_shift_keyboard() -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton('🟥 Shift 1 (00:00-08:00)', callback_data='filter_shift_1'),
+        ],
+        [
+            InlineKeyboardButton('🟩 Shift 2 (08:00-16:00)', callback_data='filter_shift_2'),
+        ],
+        [
+            InlineKeyboardButton('🟦 Shift 3 (16:00-00:00)', callback_data='filter_shift_3'),
+        ],
+        [
+            InlineKeyboardButton('🟨 Operasional (11:00-19:00)', callback_data='filter_shift_ops'),
+        ],
+        [
+            InlineKeyboardButton('⬅️ Back', callback_data='filter'),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def create_filter_time_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton('📅 Hari Ini', callback_data='filter_today'),
@@ -185,7 +222,24 @@ def create_filter_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton('📊 Custom Range', callback_data='filter_custom'),
         ],
         [
-            InlineKeyboardButton('⬅️ Back', callback_data='show_menu'),
+            InlineKeyboardButton('⬅️ Back', callback_data='filter'),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def create_filter_status_keyboard() -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton('⏳ Pending', callback_data='filter_pending'),
+        ],
+        [
+            InlineKeyboardButton('✅ Completed', callback_data='filter_completed'),
+        ],
+        [
+            InlineKeyboardButton('📊 All', callback_data='filter_all'),
+        ],
+        [
+            InlineKeyboardButton('⬅️ Back', callback_data='filter'),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -989,9 +1043,111 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == 'filter':
-        msg = "📊 **Filter Jadwal**\n\nPilih range waktu:"
+        msg = "📊 **Filter Jadwal**\n\nPilih kategori filter:"
         await query.edit_message_text(msg, parse_mode='Markdown',
-                                      reply_markup=create_filter_keyboard())
+                                      reply_markup=create_filter_main_keyboard())
+        return
+    
+    if data == 'filter_shift':
+        msg = "⏰ **Filter by Shift**\n\nPilih shift:"
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_filter_shift_keyboard())
+        return
+    
+    if data == 'filter_time':
+        msg = "📅 **Filter by Time**\n\nPilih periode:"
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_filter_time_keyboard())
+        return
+    
+    if data == 'filter_status':
+        msg = "✅ **Filter by Status**\n\nPilih status:"
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_filter_status_keyboard())
+        return
+    
+    if data.startswith('filter_shift_'):
+        shift_num = data.replace('filter_shift_', '')
+        
+        shift_times = {
+            '1': (0, 8, '🟥 Shift 1 (00:00-08:00)'),
+            '2': (8, 16, '🟩 Shift 2 (08:00-16:00)'),
+            '3': (16, 24, '🟦 Shift 3 (16:00-00:00)'),
+            'ops': (11, 19, '🟨 Operasional (11:00-19:00)')
+        }
+        
+        if shift_num in shift_times:
+            start_hour, end_hour, shift_name = shift_times[shift_num]
+            
+            all_schedules = database.get_user_schedules(user_id)
+            
+            filtered = []
+            for s in all_schedules:
+                hour = s['schedule_time'].hour
+                if shift_num == '3':
+                    if hour >= start_hour or hour < end_hour:
+                        filtered.append(s)
+                else:
+                    if start_hour <= hour < end_hour:
+                        filtered.append(s)
+            
+            if not filtered:
+                msg = f"{shift_name}\n\n📭 Tidak ada jadwal untuk shift ini."
+            else:
+                msg = f"{shift_name}\n\n"
+                for i, s in enumerate(filtered, 1):
+                    status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+                    msg += f"{i}. {status_emoji} **{s['title']}**\n"
+                    msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+            
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_main_menu())
+        return
+    
+    if data == 'filter_pending':
+        schedules = database.get_user_schedules(user_id, status='pending')
+        
+        if not schedules:
+            msg = "⏳ **Pending Jadwal**\n\n📭 Tidak ada jadwal pending."
+        else:
+            msg = f"⏳ **Pending Jadwal ({len(schedules)} items):**\n\n"
+            for i, s in enumerate(schedules, 1):
+                msg += f"{i}. **{s['title']}**\n"
+                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+        
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_main_menu())
+        return
+    
+    if data == 'filter_completed':
+        schedules = database.get_user_schedules(user_id, status='completed')
+        
+        if not schedules:
+            msg = "✅ **Completed Jadwal**\n\n📭 Tidak ada jadwal yang sudah selesai."
+        else:
+            msg = f"✅ **Completed Jadwal ({len(schedules)} items):**\n\n"
+            for i, s in enumerate(schedules, 1):
+                msg += f"{i}. **{s['title']}**\n"
+                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+        
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_main_menu())
+        return
+    
+    if data == 'filter_all':
+        schedules = database.get_user_schedules(user_id)
+        
+        if not schedules:
+            msg = "📊 **Semua Jadwal**\n\n📭 Tidak ada jadwal."
+        else:
+            msg = f"📊 **Semua Jadwal ({len(schedules)} items):**\n\n"
+            for i, s in enumerate(schedules, 1):
+                status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+                msg += f"{i}. {status_emoji} **{s['title']}**\n"
+                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+        
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_main_menu())
         return
     
     if data == 'filter_today':
