@@ -199,17 +199,22 @@ def create_schedule_actions_keyboard(schedule_id: int) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def create_time_selection_keyboard() -> InlineKeyboardMarkup:
+def create_shift_selection_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [
-            InlineKeyboardButton('06:00', callback_data='time_06:00'),
-            InlineKeyboardButton('09:00', callback_data='time_09:00'),
-            InlineKeyboardButton('12:00', callback_data='time_12:00'),
+            InlineKeyboardButton('🌙 Night (00:00-08:00)', callback_data='shift_night'),
         ],
         [
-            InlineKeyboardButton('15:00', callback_data='time_15:00'),
-            InlineKeyboardButton('18:00', callback_data='time_18:00'),
-            InlineKeyboardButton('21:00', callback_data='time_21:00'),
+            InlineKeyboardButton('☀️ Morning (08:00-16:00)', callback_data='shift_morning'),
+        ],
+        [
+            InlineKeyboardButton('🌆 Evening (16:00-00:00)', callback_data='shift_evening'),
+        ],
+        [
+            InlineKeyboardButton('🔄 Special (11:00-19:00)', callback_data='shift_special'),
+        ],
+        [
+            InlineKeyboardButton('🕐 Custom Time', callback_data='shift_custom'),
         ],
         [
             InlineKeyboardButton('❌ Cancel', callback_data='cancel_time'),
@@ -217,18 +222,130 @@ def create_time_selection_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def create_reminder_options_keyboard() -> InlineKeyboardMarkup:
+def create_hour_selection_keyboard(shift_type: str) -> InlineKeyboardMarkup:
+    shift_hours = {
+        'night': [(0,1,2,3,4,5,6,7)],
+        'morning': [(8,9,10,11), (12,13,14,15)],
+        'evening': [(16,17,18,19), (20,21,22,23)],
+        'special': [(11,12,13,14), (15,16,17,18,19)],
+    }
+    
+    hours = shift_hours.get(shift_type, [(0,1,2,3,4,5,6,7), (8,9,10,11), (12,13,14,15), (16,17,18,19), (20,21,22,23)])
+    
+    keyboard = []
+    for hour_row in hours:
+        row = [InlineKeyboardButton(f'{h:02d}:XX', callback_data=f'hour_{h}') for h in hour_row]
+        keyboard.append(row)
+    
+    keyboard.append([
+        InlineKeyboardButton('⬅️ Back', callback_data='back_shift'),
+        InlineKeyboardButton('❌ Cancel', callback_data='cancel_time'),
+    ])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def create_minute_selection_keyboard(hour: int) -> InlineKeyboardMarkup:
     keyboard = [
         [
-            InlineKeyboardButton('5 min', callback_data='rem_5'),
-            InlineKeyboardButton('15 min', callback_data='rem_15'),
-            InlineKeyboardButton('30 min', callback_data='rem_30'),
+            InlineKeyboardButton(f'{hour:02d}:00', callback_data=f'time_{hour:02d}:00'),
+            InlineKeyboardButton(f'{hour:02d}:15', callback_data=f'time_{hour:02d}:15'),
+            InlineKeyboardButton(f'{hour:02d}:30', callback_data=f'time_{hour:02d}:30'),
+            InlineKeyboardButton(f'{hour:02d}:45', callback_data=f'time_{hour:02d}:45'),
         ],
         [
-            InlineKeyboardButton('1 hour', callback_data='rem_60'),
-            InlineKeyboardButton('Custom', callback_data='rem_custom'),
+            InlineKeyboardButton('⬅️ Back', callback_data=f'back_hour_{hour}'),
+            InlineKeyboardButton('❌ Cancel', callback_data='cancel_time'),
         ],
     ]
+    return InlineKeyboardMarkup(keyboard)
+
+def create_all_hours_keyboard() -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton('00', callback_data='hour_00'),
+            InlineKeyboardButton('01', callback_data='hour_01'),
+            InlineKeyboardButton('02', callback_data='hour_02'),
+            InlineKeyboardButton('03', callback_data='hour_03'),
+        ],
+        [
+            InlineKeyboardButton('04', callback_data='hour_04'),
+            InlineKeyboardButton('05', callback_data='hour_05'),
+            InlineKeyboardButton('06', callback_data='hour_06'),
+            InlineKeyboardButton('07', callback_data='hour_07'),
+        ],
+        [
+            InlineKeyboardButton('08', callback_data='hour_08'),
+            InlineKeyboardButton('09', callback_data='hour_09'),
+            InlineKeyboardButton('10', callback_data='hour_10'),
+            InlineKeyboardButton('11', callback_data='hour_11'),
+        ],
+        [
+            InlineKeyboardButton('12', callback_data='hour_12'),
+            InlineKeyboardButton('13', callback_data='hour_13'),
+            InlineKeyboardButton('14', callback_data='hour_14'),
+            InlineKeyboardButton('15', callback_data='hour_15'),
+        ],
+        [
+            InlineKeyboardButton('16', callback_data='hour_16'),
+            InlineKeyboardButton('17', callback_data='hour_17'),
+            InlineKeyboardButton('18', callback_data='hour_18'),
+            InlineKeyboardButton('19', callback_data='hour_19'),
+        ],
+        [
+            InlineKeyboardButton('20', callback_data='hour_20'),
+            InlineKeyboardButton('21', callback_data='hour_21'),
+            InlineKeyboardButton('22', callback_data='hour_22'),
+            InlineKeyboardButton('23', callback_data='hour_23'),
+        ],
+        [
+            InlineKeyboardButton('⬅️ Back', callback_data='back_shift'),
+            InlineKeyboardButton('❌ Cancel', callback_data='cancel_time'),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def create_reminder_selection_keyboard(selected_reminders: str = '') -> InlineKeyboardMarkup:
+    reminder_options = [5, 15, 30, 60]
+    selected_list = [int(x) for x in selected_reminders.split(',') if x.strip()]
+    
+    keyboard = []
+    row1 = []
+    row2 = []
+    
+    for i, rem in enumerate(reminder_options):
+        is_selected = rem in selected_list
+        
+        if rem == 60:
+            label = '1 hour'
+        else:
+            label = f'{rem} min'
+        
+        if is_selected:
+            btn_text = f'✅ {label}'
+        else:
+            btn_text = f'⬜ {label}'
+        
+        callback_data = f'toggle_rem_{rem}'
+        
+        if i < 2:
+            row1.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
+        else:
+            row2.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
+    
+    keyboard.append(row1)
+    keyboard.append(row2)
+    
+    if selected_list:
+        selected_str = ', '.join([f'{x} min' if x != 60 else '1 hour' for x in sorted(selected_list, reverse=True)])
+        keyboard.append([
+            InlineKeyboardButton(f'✓ Set: {selected_str}', callback_data='set_reminders'),
+        ])
+    
+    keyboard.append([
+        InlineKeyboardButton('⬅️ Back', callback_data='back_to_schedule'),
+        InlineKeyboardButton('❌ Skip Reminder', callback_data='skip_reminder'),
+    ])
+    
     return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -344,10 +461,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if parsed_date:
                 state['date'] = parsed_date
                 state['waiting_for'] = 'time'
+                state['remind_times'] = ''
                 
-                msg = f"✅ Tanggal: {format_datetime(parsed_date)}\n\n⏰ Pilih jam:"
+                msg = f"✅ Tanggal: {parsed_date.strftime('%d/%m/%Y')}\n\n⏰ Pilih shift waktu:"
                 await update.message.reply_text(msg, parse_mode='Markdown',
-                                                reply_markup=create_time_selection_keyboard())
+                                                reply_markup=create_shift_selection_keyboard())
                 return
             else:
                 await update.message.reply_text(
@@ -365,70 +483,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
                 
                 title = state.get('title', 'Untitled')
-                remind_times = state.get('remind_times', '60,30,15,5')
                 
-                schedule_id = database.add_schedule(
-                    user_id, title, "", schedule_time,
-                    remind_times=remind_times,
-                    category=state.get('category', 'general'),
-                    priority=state.get('priority', 'medium')
-                )
-                
-                reminder_times_list = [int(x) for x in remind_times.split(',')]
-                for rem_time in reminder_times_list:
-                    reminder_datetime = schedule_time - timedelta(minutes=rem_time)
-                    if reminder_datetime > datetime.now():
-                        scheduler.add_job(
-                            send_reminder,
-                            trigger=DateTrigger(run_date=reminder_datetime),
-                            args=[user_id, schedule_id, title, schedule_time, rem_time],
-                            id=f'reminder_{schedule_id}_{rem_time}',
-                            replace_existing=True
-                        )
+                state['schedule_time'] = schedule_time
+                state['waiting_for'] = 'reminder'
                 
                 msg = f"""
-✅ **Jadwal berhasil ditambahkan!**
+✅ **Detail Jadwal:**
 
 📝 {title}
 📅 {format_datetime(schedule_time)}
 
-🔔 Reminder akan dikirim:
-• {rem_time} menit sebelum
+🔔 Pilih reminder yang diinginkan:
 """
-                await update.message.reply_text(msg, parse_mode='Markdown')
-                user_states[user_id] = {}
+                await update.message.reply_text(msg, parse_mode='Markdown',
+                                                reply_markup=create_reminder_selection_keyboard())
                 return
     
     parsed_datetime = try_parse_full_natural(text)
     if parsed_datetime:
         title, schedule_time = parsed_datetime
         
-        schedule_id = database.add_schedule(
-            user_id, title, "", schedule_time,
-            remind_times='60,30,15,5'
-        )
-        
-        for rem_time in [60, 30, 15, 5]:
-            reminder_datetime = schedule_time - timedelta(minutes=rem_time)
-            if reminder_datetime > datetime.now():
-                scheduler.add_job(
-                    send_reminder,
-                    trigger=DateTrigger(run_date=reminder_datetime),
-                    args=[user_id, schedule_id, title, schedule_time, rem_time],
-                    id=f'reminder_{schedule_id}_{rem_time}',
-                    replace_existing=True
-                )
+        user_states[user_id] = {
+            'title': title,
+            'schedule_time': schedule_time,
+            'remind_times': '',
+            'waiting_for': 'reminder'
+        }
         
         msg = f"""
-✅ **Jadwal dari Natural Language**
+✅ **Natural Language Detected!**
 
 📝 {title}
 📅 {format_datetime(schedule_time)}
 
-🔔 Reminder: 1 jam, 30 min, 15 min, 5 min sebelum
+🔔 Pilih reminder yang diinginkan:
 """
         await update.message.reply_text(msg, parse_mode='Markdown',
-                                        reply_markup=create_schedule_actions_keyboard(schedule_id))
+                                        reply_markup=create_reminder_selection_keyboard())
         return
     
     await update.message.reply_text(
@@ -527,10 +618,60 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         user_states[user_id]['date'] = selected_date
         user_states[user_id]['waiting_for'] = 'time'
+        user_states[user_id]['remind_times'] = ''
         
-        msg = f"✅ Tanggal dipilih: {selected_date.strftime('%d/%m/%Y')}\n\n⏰ Pilih jam:"
+        msg = f"✅ Tanggal dipilih: {selected_date.strftime('%d/%m/%Y')}\n\n⏰ Pilih shift waktu:"
         await query.edit_message_text(msg, parse_mode='Markdown',
-                                      reply_markup=create_time_selection_keyboard())
+                                      reply_markup=create_shift_selection_keyboard())
+        return
+    
+    if data.startswith('shift_'):
+        shift_type = data.replace('shift_', '')
+        
+        if user_id not in user_states:
+            user_states[user_id] = {}
+        
+        if shift_type == 'custom':
+            msg = "🕐 Pilih jam secara manual:"
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_all_hours_keyboard())
+        else:
+            shift_names = {
+                'night': '🌙 Night Shift (00:00-08:00)',
+                'morning': '☀️ Morning Shift (08:00-16:00)',
+                'evening': '🌆 Evening Shift (16:00-00:00)',
+                'special': '🔄 Special Shift (11:00-19:00)'
+            }
+            
+            msg = f"{shift_names.get(shift_type, 'Pilih Jam')}\n\nKlik jam:"
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_hour_selection_keyboard(shift_type))
+        return
+    
+    if data.startswith('hour_'):
+        hour = int(data.replace('hour_', ''))
+        
+        if user_id in user_states:
+            user_states[user_id]['selected_hour'] = hour
+        
+        msg = f"🕐 Jam: {hour:02d}\n\nPilih menit:"
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_minute_selection_keyboard(hour))
+        return
+    
+    if data.startswith('back_hour_'):
+        hour = int(data.replace('back_hour_', ''))
+        await query.edit_message_text("⏰ Pilih shift waktu:",
+                                      reply_markup=create_shift_selection_keyboard())
+        return
+    
+    if data == 'back_shift':
+        year = user_states[user_id].get('date', datetime.now()).year
+        month = user_states[user_id].get('date', datetime.now()).month
+        
+        msg = "📅 Pilih tanggal:"
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_calendar_keyboard(year, month))
         return
     
     if data.startswith('time_'):
@@ -541,8 +682,56 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             date = user_states[user_id].get('date', datetime.now())
             schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
             
+            user_states[user_id]['schedule_time'] = schedule_time
+            user_states[user_id]['waiting_for'] = 'reminder'
+            
             title = user_states[user_id].get('title', 'Jadwal')
-            remind_times = user_states[user_id].get('remind_times', '60,30,15,5')
+            
+            msg = f"""
+✅ **Detail Jadwal:**
+
+📝 {title}
+📅 {format_datetime(schedule_time)}
+
+🔔 Pilih reminder yang diinginkan:
+"""
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_reminder_selection_keyboard())
+        return
+    
+    if data.startswith('toggle_rem_'):
+        rem_time = int(data.replace('toggle_rem_', ''))
+        
+        if user_id in user_states:
+            current_rem = user_states[user_id].get('remind_times', '')
+            
+            if current_rem:
+                rem_list = [int(x) for x in current_rem.split(',') if x.strip()]
+            else:
+                rem_list = []
+            
+            if rem_time in rem_list:
+                rem_list.remove(rem_time)
+            else:
+                rem_list.append(rem_time)
+            
+            rem_list.sort(reverse=True)
+            user_states[user_id]['remind_times'] = ','.join([str(x) for x in rem_list]) if rem_list else ''
+            
+            await query.edit_message_reply_markup(
+                reply_markup=create_reminder_selection_keyboard(user_states[user_id]['remind_times'])
+            )
+        return
+    
+    if data == 'set_reminders':
+        if user_id in user_states:
+            remind_times = user_states[user_id].get('remind_times', '')
+            
+            if not remind_times:
+                remind_times = '5'
+            
+            schedule_time = user_states[user_id].get('schedule_time', datetime.now())
+            title = user_states[user_id].get('title', 'Jadwal')
             
             schedule_id = database.add_schedule(
                 user_id, title, "", schedule_time,
@@ -560,17 +749,56 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         replace_existing=True
                     )
             
+            remind_str = ', '.join([f'{x} min' for x in remind_times.split(',')])
             msg = f"""
 ✅ **Jadwal berhasil ditambahkan!**
 
 📝 {title}
 📅 {format_datetime(schedule_time)}
 
-🔔 Reminder: {', '.join([f'{x} min' for x in remind_times.split(',')])} sebelum
+🔔 Reminder: {remind_str} sebelum
 """
             await query.edit_message_text(msg, parse_mode='Markdown',
                                           reply_markup=create_schedule_actions_keyboard(schedule_id))
             user_states[user_id] = {}
+        return
+    
+    if data == 'skip_reminder':
+        if user_id in user_states:
+            schedule_time = user_states[user_id].get('schedule_time', datetime.now())
+            title = user_states[user_id].get('title', 'Jadwal')
+            
+            schedule_id = database.add_schedule(
+                user_id, title, "", schedule_time,
+                remind_times=''
+            )
+            
+            msg = f"""
+✅ **Jadwal berhasil ditambahkan!**
+
+📝 {title}
+📅 {format_datetime(schedule_time)}
+
+🔔 No reminder set
+"""
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_schedule_actions_keyboard(schedule_id))
+            user_states[user_id] = {}
+        return
+    
+    if data == 'back_to_schedule':
+        if user_id in user_states:
+            schedule_time = user_states[user_id].get('schedule_time', datetime.now())
+            title = user_states[user_id].get('title', 'Jadwal')
+            
+            msg = f"""
+📝 Judul: {title}
+📅 Tanggal: {format_datetime(schedule_time)}
+
+⏰ Pilih waktu lagi:
+"""
+            await query.edit_message_text(msg, parse_mode='Markdown',
+                                          reply_markup=create_shift_selection_keyboard())
         return
     
     if data == 'add_schedule':
