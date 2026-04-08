@@ -2,13 +2,10 @@ import os
 import logging
 import re
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from calendar import monthrange
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.date import DateTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 import database
 
 logging.basicConfig(level=logging.INFO)
@@ -17,19 +14,49 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 
 WITA_OFFSET = timedelta(hours=8)
-WITA_TIMEZONE = timezone(WITA_OFFSET)
 
 def get_local_now():
     utc_now = datetime.utcnow()
     return utc_now + WITA_OFFSET
 
-scheduler = BackgroundScheduler()
-scheduler.start()
-
 user_states = {}
 
-def auto_complete_expired_schedules():
-    conn = None
+async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    user_id = job.data['user_id']
+    schedule_id = job.data['schedule_id']
+    title = job.data['title']
+    schedule_time = job.data['schedule_time']
+    rem_minutes = job.data['rem_minutes']
+    
+    logger.info(f"send_reminder_job called for schedule {schedule_id}")
+    
+    schedule = database.get_schedule_by_id(schedule_id)
+    if schedule and schedule['status'] == 'completed':
+        logger.info(f"Schedule {schedule_id} already completed, skipping reminder")
+        return
+    
+    sent_reminders = database.get_sent_reminders(schedule_id)
+    if str(rem_minutes) in sent_reminders:
+        logger.info(f"Reminder {rem_minutes} already sent for schedule {schedule_id}")
+        return
+    
+    msg = f"""
+⏰ **Reminder Jadwal!**
+
+📝 {title}
+📅 {format_datetime(schedule_time)}
+
+Jadwal akan dimulai dalam **{rem_minutes} menit**!
+"""
+    
+    await context.bot.send_message(chat_id=user_id, text=msg, parse_mode='Markdown',
+                                   reply_markup=create_schedule_actions_keyboard(schedule_id))
+    
+    database.mark_reminder_sent(schedule_id, str(rem_minutes))
+    logger.info(f"Reminder {rem_minutes} min sent for schedule {schedule_id} to user {user_id}")
+
+async def auto_complete_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         now = get_local_now()
         grace_period = timedelta(hours=1)
@@ -44,56 +71,10 @@ def auto_complete_expired_schedules():
             if now > schedule_time + grace_period:
                 database.update_schedule_status(user_id, schedule_id, 'completed')
                 logger.info(f"Auto-completed schedule {schedule_id} - {schedule['title']}")
-    
     except Exception as e:
         logger.error(f"Error in auto_complete: {e}")
 
-def send_start_notification_sync(user_id: int, schedule_id: int, title: str, schedule_time: datetime):
-    logger.info(f"send_start_notification_sync called for schedule {schedule_id}")
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(send_start_notification(user_id, schedule_id, title, schedule_time))
-        loop.close()
-    except Exception as e:
-        logger.error(f"Error in send_start_notification_sync: {e}")
-
-async def send_start_notification(user_id: int, schedule_id: int, title: str, schedule_time: datetime):
-    app = None
-    try:
-        app = Application.builder().token(BOT_TOKEN).build()
-        await app.initialize()
-        await app.start()
-        
-        if database.get_start_notifications_sent(schedule_id):
-            logger.info(f"Start notification already sent for schedule {schedule_id}")
-            return
-        
-        msg = f"""
-⏱️ **Jadwal Sedang Berlangsung!**
-
-📝 {title}
-📅 {format_datetime(schedule_time)}
-
-Jadwal ini sudah dimulai!
-"""
-        
-        await app.bot.send_message(chat_id=user_id, text=msg, parse_mode='Markdown',
-                                   reply_markup=create_schedule_actions_keyboard(schedule_id))
-        
-        database.mark_start_notification_sent(schedule_id)
-        logger.info(f"Start notification sent for schedule {schedule_id} to user {user_id}")
-    except Exception as e:
-        logger.error(f"Failed to send start notification: {e}")
-    finally:
-        if app:
-            try:
-                await app.stop()
-                await app.shutdown()
-            except:
-                pass
-
-def check_schedules_starting():
+async def check_starting_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         schedules = database.get_schedules_starting_now()
         logger.info(f"Found {len(schedules)} schedules starting now")
@@ -105,27 +86,23 @@ def check_schedules_starting():
             schedule_time = schedule['schedule_time']
             
             if not database.get_start_notifications_sent(schedule_id):
-                send_start_notification_sync(user_id, schedule_id, title, schedule_time)
-                logger.info(f"Sent start notification for schedule {schedule_id}")
+                msg = f"""
+⏱️ **Jadwal Sedang Berlangsung!**
+
+📝 {title}
+📅 {format_datetime(schedule_time)}
+
+Jadwal ini sudah dimulai!
+"""
+                await context.bot.send_message(chat_id=user_id, text=msg, parse_mode='Markdown',
+                                              reply_markup=create_schedule_actions_keyboard(schedule_id))
+                database.mark_start_notification_sent(schedule_id)
+                logger.info(f"Start notification sent for schedule {schedule_id}")
     except Exception as e:
         logger.error(f"Error checking schedules starting: {e}")
 
-def auto_refresh_list_views_sync():
+async def auto_refresh_list_job(context: ContextTypes.DEFAULT_TYPE):
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(auto_refresh_list_views())
-        loop.close()
-    except Exception as e:
-        logger.error(f"Error in auto_refresh_list_views_sync: {e}")
-
-async def auto_refresh_list_views():
-    app = None
-    try:
-        app = Application.builder().token(BOT_TOKEN).build()
-        await app.initialize()
-        await app.start()
-        
         active_views = database.get_all_active_list_views()
         logger.info(f"Auto-refreshing {len(active_views)} active list views")
         
@@ -141,6 +118,7 @@ async def auto_refresh_list_views():
             
             msg = "📋 **Daftar Jadwal Anda:**\n\n"
             msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ✅ Selesai\n\n"
+            msg += "_🔄 Auto-refresh setiap 5 menit_\n\n"
             
             for i, s in enumerate(schedules, 1):
                 status_emoji = get_smart_status(s)
@@ -149,7 +127,7 @@ async def auto_refresh_list_views():
                 msg += f"   ID: {s['id']}\n\n"
             
             try:
-                await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id,
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id,
                                                 text=msg, parse_mode='Markdown',
                                                 reply_markup=create_main_menu())
             except Exception as e:
@@ -158,41 +136,9 @@ async def auto_refresh_list_views():
         
         logger.info("Auto-refresh completed")
     except Exception as e:
-        logger.error(f"Error in auto_refresh_list_views: {e}")
-    finally:
-        if app:
-            try:
-                await app.stop()
-                await app.shutdown()
-            except:
-                pass
+        logger.error(f"Error in auto_refresh_list: {e}")
 
-scheduler.add_job(
-    auto_complete_expired_schedules,
-    trigger=IntervalTrigger(minutes=30),
-    id='auto_complete_job',
-    replace_existing=True
-)
-
-scheduler.add_job(
-    check_schedules_starting,
-    trigger=IntervalTrigger(minutes=5),
-    id='check_starting_job',
-    replace_existing=True
-)
-
-scheduler.add_job(
-    auto_refresh_list_views_sync,
-    trigger=IntervalTrigger(minutes=5),
-    id='auto_refresh_list_job',
-    replace_existing=True
-)
-
-logger.info("Auto-complete scheduler started - runs every 30 minutes")
-logger.info("Start notification scheduler started - runs every 5 minutes")
-logger.info("Auto-refresh list scheduler started - runs every 5 minutes")
-
-def restore_reminders():
+def restore_reminders(app: Application):
     try:
         pending_schedules = database.get_all_pending_schedules()
         logger.info(f"Found {len(pending_schedules)} pending schedules to restore")
@@ -223,20 +169,21 @@ def restore_reminders():
                 logger.info(f"Reminder {rem_time} min: reminder_time={reminder_datetime}, now={get_local_now()}")
                 
                 if reminder_datetime > get_local_now():
-                    if reminder_datetime.tzinfo is not None:
-                        reminder_datetime_naive = reminder_datetime.replace(tzinfo=None)
-                    else:
-                        reminder_datetime_naive = reminder_datetime
-                    
-                    scheduler.add_job(
-                        send_reminder_sync,
-                        trigger=DateTrigger(run_date=reminder_datetime_naive),
-                        args=[user_id, schedule_id, title, schedule_time, rem_time],
-                        id=f'reminder_{schedule_id}_{rem_time}',
-                        replace_existing=True
+                    delay_seconds = (reminder_datetime - get_local_now()).total_seconds()
+                    app.job_queue.run_once(
+                        send_reminder_job,
+                        when=delay_seconds,
+                        data={
+                            'user_id': user_id,
+                            'schedule_id': schedule_id,
+                            'title': title,
+                            'schedule_time': schedule_time,
+                            'rem_minutes': rem_time
+                        },
+                        name=f'reminder_{schedule_id}_{rem_time}'
                     )
                     restored_count += 1
-                    logger.info(f"Restored reminder for schedule {schedule_id} at {reminder_datetime_naive}")
+                    logger.info(f"Restored reminder for schedule {schedule_id} in {delay_seconds} seconds")
                 else:
                     logger.info(f"Skipped reminder {rem_time} for schedule {schedule_id} - time already passed")
         
@@ -1230,21 +1177,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for rem_time in [int(x) for x in remind_times.split(',')]:
                 reminder_datetime = schedule_time - timedelta(minutes=rem_time)
                 
-                if reminder_datetime.tzinfo is not None:
-                    reminder_datetime_naive = reminder_datetime.replace(tzinfo=None)
-                else:
-                    reminder_datetime_naive = reminder_datetime
-                
                 logger.info(f"Checking reminder {rem_time} min: reminder_time={reminder_datetime}, now={get_local_now()}, should_schedule={reminder_datetime > get_local_now()}")
                 if reminder_datetime > get_local_now():
-                    scheduler.add_job(
-                        send_reminder_sync,
-                        trigger=DateTrigger(run_date=reminder_datetime_naive),
-                        args=[user_id, schedule_id, title, schedule_time, rem_time],
-                        id=f'reminder_{schedule_id}_{rem_time}',
-                        replace_existing=True
+                    delay_seconds = (reminder_datetime - get_local_now()).total_seconds()
+                    context.application.job_queue.run_once(
+                        send_reminder_job,
+                        when=delay_seconds,
+                        data={
+                            'user_id': user_id,
+                            'schedule_id': schedule_id,
+                            'title': title,
+                            'schedule_time': schedule_time,
+                            'rem_minutes': rem_time
+                        },
+                        name=f'reminder_{schedule_id}_{rem_time}'
                     )
-                    logger.info(f"Scheduled reminder for schedule {schedule_id} at {reminder_datetime_naive}")
+                    logger.info(f"Scheduled reminder for schedule {schedule_id} in {delay_seconds} seconds")
                 else:
                     logger.info(f"Skipped reminder {rem_time} min - time already passed")
             
@@ -1637,11 +1585,8 @@ Pilih reminder sesuai kebutuhan saat membuat jadwal.
         schedule_id = int(data.replace('delete_', ''))
         
         if database.delete_schedule(user_id, schedule_id):
-            try:
-                for rem_time in [60, 30, 15, 5]:
-                    scheduler.remove_job(f'reminder_{schedule_id}_{rem_time}')
-            except:
-                pass
+            for job in context.application.job_queue.get_jobs_by_name(f'reminder_{schedule_id}'):
+                job.schedule_removal()
             
             await query.edit_message_text(
                 "✅ Jadwal berhasil dihapus!",
@@ -1671,57 +1616,6 @@ Pilih reminder sesuai kebutuhan saat membuat jadwal.
             reply_markup=create_reminder_selection_keyboard(user_states[user_id].get('remind_times', '5'))
         )
         return
-
-def send_reminder_sync(user_id: int, schedule_id: int, title: str, schedule_time: datetime, rem_minutes: int):
-    logger.info(f"send_reminder_sync called for schedule {schedule_id}, reminder {rem_minutes} min")
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(send_reminder(user_id, schedule_id, title, schedule_time, rem_minutes))
-        loop.close()
-    except Exception as e:
-        logger.error(f"Error in send_reminder_sync: {e}")
-
-async def send_reminder(user_id: int, schedule_id: int, title: str, schedule_time: datetime, rem_minutes: int):
-    app = None
-    try:
-        app = Application.builder().token(BOT_TOKEN).build()
-        await app.initialize()
-        await app.start()
-        
-        schedule = database.get_schedule_by_id(schedule_id)
-        if schedule and schedule['status'] == 'completed':
-            logger.info(f"Schedule {schedule_id} already completed, skipping reminder")
-            return
-        
-        sent_reminders = database.get_sent_reminders(schedule_id)
-        if str(rem_minutes) in sent_reminders:
-            logger.info(f"Reminder {rem_minutes} already sent for schedule {schedule_id}")
-            return
-        
-        msg = f"""
-⏰ **Reminder Jadwal!**
-
-📝 {title}
-📅 {format_datetime(schedule_time)}
-
-Jadwal akan dimulai dalam **{rem_minutes} menit**!
-"""
-        
-        await app.bot.send_message(chat_id=user_id, text=msg, parse_mode='Markdown',
-                                   reply_markup=create_schedule_actions_keyboard(schedule_id))
-        
-        database.mark_reminder_sent(schedule_id, str(rem_minutes))
-        logger.info(f"Reminder {rem_minutes} min sent for schedule {schedule_id} to user {user_id}")
-    except Exception as e:
-        logger.error(f"Failed to send reminder: {e}")
-    finally:
-        if app:
-            try:
-                await app.stop()
-                await app.shutdown()
-            except:
-                pass
 
 async def add_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Received add command from user {update.effective_user.id}: {context.args}")
@@ -1822,12 +1716,18 @@ async def add_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYP
     for rem_time in [60, 30, 15, 5]:
         reminder_time = schedule_time - timedelta(minutes=rem_time)
         if reminder_time > now:
-            scheduler.add_job(
-                send_reminder_sync,
-                trigger=DateTrigger(run_date=reminder_time),
-                args=[user_id, schedule_id, title, schedule_time, rem_time],
-                id=f'reminder_{schedule_id}_{rem_time}',
-                replace_existing=True
+            delay_seconds = (reminder_time - now).total_seconds()
+            context.application.job_queue.run_once(
+                send_reminder_job,
+                when=delay_seconds,
+                data={
+                    'user_id': user_id,
+                    'schedule_id': schedule_id,
+                    'title': title,
+                    'schedule_time': schedule_time,
+                    'rem_minutes': rem_time
+                },
+                name=f'reminder_{schedule_id}_{rem_time}'
             )
     
     msg = f"""
@@ -1988,11 +1888,8 @@ async def delete_schedule_command(update: Update, context: ContextTypes.DEFAULT_
     deleted = database.delete_schedule(user_id, schedule_id)
     
     if deleted:
-        try:
-            for rem_time in [60, 30, 15, 5]:
-                scheduler.remove_job(f'reminder_{schedule_id}_{rem_time}')
-        except:
-            pass
+        for job in context.application.job_queue.get_jobs_by_name(f'reminder_{schedule_id}'):
+            job.schedule_removal()
         await update.message.reply_text("✅ Jadwal berhasil dihapus!", parse_mode='Markdown')
     else:
         await update.message.reply_text("❌ Jadwal tidak ditemukan atau bukan milik Anda.", parse_mode='Markdown')
@@ -2031,19 +1928,25 @@ async def clear_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for s in schedules:
         database.delete_schedule(user_id, s['id'])
-        try:
-            for rem_time in [60, 30, 15, 5]:
-                scheduler.remove_job(f'reminder_{s["id"]}_{rem_time}')
-        except:
-            pass
+        for job in context.application.job_queue.get_jobs_by_name(f'reminder_{s["id"]}'):
+            job.schedule_removal()
     
     await update.message.reply_text(f"✅ {len(schedules)} jadwal berhasil dihapus!", parse_mode='Markdown')
 
 def main():
     database.init_db()
-    restore_reminders()
     
     app = Application.builder().token(BOT_TOKEN).build()
+    
+    app.job_queue.run_repeating(auto_complete_job, interval=1800, first=10)
+    app.job_queue.run_repeating(check_starting_job, interval=300, first=10)
+    app.job_queue.run_repeating(auto_refresh_list_job, interval=300, first=10)
+    
+    logger.info("Auto-complete job scheduled - runs every 30 minutes")
+    logger.info("Start notification job scheduled - runs every 5 minutes")
+    logger.info("Auto-refresh list job scheduled - runs every 5 minutes")
+    
+    restore_reminders(app)
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
