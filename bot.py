@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 
+TIMEZONE_OFFSET = timedelta(hours=8)  # WITA (UTC+8) for Kalimantan Utara
+
+def get_local_now():
+    utc_now = datetime.utcnow()
+    local_now = utc_now + TIMEZONE_OFFSET
+    return local_now
+
 scheduler = BackgroundScheduler()
 scheduler.start()
 
@@ -23,7 +30,7 @@ user_states = {}
 def auto_complete_expired_schedules():
     conn = None
     try:
-        now = datetime.now()
+        now = get_local_now()
         grace_period = timedelta(hours=1)
         
         all_schedules = database.get_all_pending_schedules()
@@ -50,7 +57,7 @@ scheduler.add_job(
 logger.info("Auto-complete scheduler started - runs every 30 minutes")
 
 def get_smart_status(schedule: dict) -> str:
-    now = datetime.now()
+    now = get_local_now()
     schedule_time = schedule['schedule_time']
     status = schedule.get('status', 'pending')
     
@@ -66,7 +73,7 @@ def get_smart_status(schedule: dict) -> str:
     return '⏳'
 
 def get_status_text(schedule: dict) -> str:
-    now = datetime.now()
+    now = get_local_now()
     schedule_time = schedule['schedule_time']
     status = schedule.get('status', 'pending')
     
