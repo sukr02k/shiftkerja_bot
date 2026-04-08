@@ -37,6 +37,25 @@ def init_db():
         )
     ''')
     
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS active_list_views (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            view_type TEXT DEFAULT 'list',
+            created_at TEXT NOT NULL
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS start_notifications_sent (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER NOT NULL,
+            sent_at TEXT NOT NULL
+        )
+    ''')
+    
     try:
         cursor.execute('ALTER TABLE schedules ADD COLUMN remind_times TEXT DEFAULT "15"')
     except:
@@ -287,3 +306,71 @@ def delete_schedule_by_id(schedule_id: int) -> bool:
     conn.commit()
     conn.close()
     return deleted
+
+def add_active_list_view(user_id: int, message_id: int, chat_id: int, view_type: str = 'list'):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM active_list_views WHERE user_id = ?', (user_id,))
+    cursor.execute('''
+        INSERT INTO active_list_views (user_id, message_id, chat_id, view_type, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (user_id, message_id, chat_id, view_type, get_local_now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def get_all_active_list_views() -> List[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, message_id, chat_id, view_type FROM active_list_views')
+    rows = cursor.fetchall()
+    conn.close()
+    return [{'user_id': row[0], 'message_id': row[1], 'chat_id': row[2], 'view_type': row[3]} for row in rows]
+
+def remove_active_list_view(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM active_list_views WHERE user_id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+
+def mark_start_notification_sent(schedule_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO start_notifications_sent (schedule_id, sent_at)
+        VALUES (?, ?)
+    ''', (schedule_id, get_local_now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def get_start_notifications_sent(schedule_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM start_notifications_sent WHERE schedule_id = ?', (schedule_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+
+def get_schedules_starting_now() -> List[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    now = get_local_now()
+    time_window_start = now - timedelta(minutes=6)
+    time_window_end = now + timedelta(minutes=1)
+    
+    cursor.execute('''
+        SELECT id, user_id, title, schedule_time, remind_times, status
+        FROM schedules
+        WHERE schedule_time >= ? AND schedule_time <= ? AND status = 'pending'
+    ''', (time_window_start.isoformat(), time_window_end.isoformat()))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [{
+        'id': row[0],
+        'user_id': row[1],
+        'title': row[2],
+        'schedule_time': datetime.fromisoformat(row[3]),
+        'remind_times': row[4],
+        'status': row[5]
+    } for row in rows]

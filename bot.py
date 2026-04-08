@@ -47,6 +47,131 @@ def auto_complete_expired_schedules():
     except Exception as e:
         logger.error(f"Error in auto_complete: {e}")
 
+def send_start_notification_sync(user_id: int, schedule_id: int, title: str, schedule_time: datetime):
+    logger.info(f"send_start_notification_sync called for schedule {schedule_id}")
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_start_notification(user_id, schedule_id, title, schedule_time))
+        loop.close()
+    except Exception as e:
+        logger.error(f"Error in send_start_notification_sync: {e}")
+
+async def send_start_notification(user_id: int, schedule_id: int, title: str, schedule_time: datetime):
+    app = None
+    try:
+        if schedule_time.tzinfo is None:
+            schedule_time = schedule_time.replace(tzinfo=WITA_TIMEZONE)
+        
+        app = Application.builder().token(BOT_TOKEN).build()
+        await app.initialize()
+        await app.start()
+        
+        if database.get_start_notifications_sent(schedule_id):
+            logger.info(f"Start notification already sent for schedule {schedule_id}")
+            return
+        
+        msg = f"""
+⏱️ **Jadwal Sedang Berlangsung!**
+
+📝 {title}
+📅 {format_datetime(schedule_time)}
+
+Jadwal ini sudah dimulai!
+"""
+        
+        await app.bot.send_message(chat_id=user_id, text=msg, parse_mode='Markdown',
+                                   reply_markup=create_schedule_actions_keyboard(schedule_id))
+        
+        database.mark_start_notification_sent(schedule_id)
+        logger.info(f"Start notification sent for schedule {schedule_id} to user {user_id}")
+    except Exception as e:
+        logger.error(f"Failed to send start notification: {e}")
+    finally:
+        if app:
+            try:
+                await app.stop()
+                await app.shutdown()
+            except:
+                pass
+
+def check_schedules_starting():
+    try:
+        schedules = database.get_schedules_starting_now()
+        logger.info(f"Found {len(schedules)} schedules starting now")
+        
+        for schedule in schedules:
+            schedule_id = schedule['id']
+            user_id = schedule['user_id']
+            title = schedule['title']
+            schedule_time = schedule['schedule_time']
+            
+            if schedule_time.tzinfo is None:
+                schedule_time = schedule_time.replace(tzinfo=WITA_TIMEZONE)
+            
+            if not database.get_start_notifications_sent(schedule_id):
+                send_start_notification_sync(user_id, schedule_id, title, schedule_time)
+                logger.info(f"Sent start notification for schedule {schedule_id}")
+    except Exception as e:
+        logger.error(f"Error checking schedules starting: {e}")
+
+def auto_refresh_list_views_sync():
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(auto_refresh_list_views())
+        loop.close()
+    except Exception as e:
+        logger.error(f"Error in auto_refresh_list_views_sync: {e}")
+
+async def auto_refresh_list_views():
+    app = None
+    try:
+        app = Application.builder().token(BOT_TOKEN).build()
+        await app.initialize()
+        await app.start()
+        
+        active_views = database.get_all_active_list_views()
+        logger.info(f"Auto-refreshing {len(active_views)} active list views")
+        
+        for view in active_views:
+            user_id = view['user_id']
+            chat_id = view['chat_id']
+            message_id = view['message_id']
+            
+            schedules = database.get_user_schedules(user_id)
+            
+            if not schedules:
+                continue
+            
+            msg = "📋 **Daftar Jadwal Anda:**\n\n"
+            msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ✅ Selesai\n\n"
+            
+            for i, s in enumerate(schedules, 1):
+                status_emoji = get_smart_status(s)
+                msg += f"{i}. {status_emoji} {s['title']}\n"
+                msg += f"   📅 {format_schedule_display(s)}\n"
+                msg += f"   ID: {s['id']}\n\n"
+            
+            try:
+                await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id,
+                                                text=msg, parse_mode='Markdown',
+                                                reply_markup=create_main_menu())
+            except Exception as e:
+                logger.info(f"Could not update message for user {user_id}: {e}")
+                database.remove_active_list_view(user_id)
+        
+        logger.info("Auto-refresh completed")
+    except Exception as e:
+        logger.error(f"Error in auto_refresh_list_views: {e}")
+    finally:
+        if app:
+            try:
+                await app.stop()
+                await app.shutdown()
+            except:
+                pass
+
 scheduler.add_job(
     auto_complete_expired_schedules,
     trigger=IntervalTrigger(minutes=30),
@@ -54,7 +179,23 @@ scheduler.add_job(
     replace_existing=True
 )
 
+scheduler.add_job(
+    check_schedules_starting,
+    trigger=IntervalTrigger(minutes=5),
+    id='check_starting_job',
+    replace_existing=True
+)
+
+scheduler.add_job(
+    auto_refresh_list_views_sync,
+    trigger=IntervalTrigger(minutes=5),
+    id='auto_refresh_list_job',
+    replace_existing=True
+)
+
 logger.info("Auto-complete scheduler started - runs every 30 minutes")
+logger.info("Start notification scheduler started - runs every 5 minutes")
+logger.info("Auto-refresh list scheduler started - runs every 5 minutes")
 
 def restore_reminders():
     try:
@@ -1158,6 +1299,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == 'main_menu':
+        database.remove_active_list_view(user_id)
         await query.edit_message_text(
             "🏠 Menu Utama",
             reply_markup=create_main_menu()
@@ -1165,6 +1307,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == 'add_schedule':
+        database.remove_active_list_view(user_id)
         user_states[user_id] = {'waiting_for': 'title'}
         
         await query.edit_message_text(
@@ -1181,10 +1324,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "📭 Tidak ada jadwal.\n\nTambah dengan ➕ Tambah Jadwal",
                 reply_markup=create_main_menu()
             )
+            database.remove_active_list_view(user_id)
             return
         
         msg = "📋 **Daftar Jadwal Anda:**\n\n"
         msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ✅ Selesai\n\n"
+        msg += "_🔄 Auto-refresh setiap 5 menit_\n\n"
         
         for i, s in enumerate(schedules, 1):
             status_emoji = get_smart_status(s)
@@ -1197,6 +1342,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
+        
+        database.add_active_list_view(user_id, query.message.message_id, query.message.chat_id, 'list')
         return
     
     if data == 'today':
@@ -1207,10 +1354,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "📭 Tidak ada jadwal hari ini.",
                 reply_markup=create_main_menu()
             )
+            database.remove_active_list_view(user_id)
             return
         
         msg = "📅 **Jadwal Hari Ini:**\n\n"
         msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ✅ Selesai\n\n"
+        msg += "_🔄 Auto-refresh setiap 5 menit_\n\n"
         
         for i, s in enumerate(schedules, 1):
             status_emoji = get_smart_status(s)
@@ -1219,6 +1368,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
+        
+        database.add_active_list_view(user_id, query.message.message_id, query.message.chat_id, 'today')
         return
     
     if data == 'search':
