@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  telegram-bot:
+    build: .
+    container_name: schedule-bot
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=8798147711:AAFju12aVbLNEeQDSXGy0vzjoBWyUHjyLGM
+    volumes:
+      - ./schedules.db:/app/schedules.db
