@@ -56,6 +56,59 @@ Jadwal akan dimulai dalam **{rem_minutes} menit**!
     database.mark_reminder_sent(schedule_id, str(rem_minutes))
     logger.info(f"Reminder {rem_minutes} min sent for schedule {schedule_id} to user {user_id}")
 
+async def send_daily_summary_job(context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Sending daily schedule summary...")
+    
+    try:
+        now = get_local_now()
+        today = now.date()
+        start_date = datetime.combine(today, datetime.min.time())
+        end_date = datetime.combine(today, datetime.max.time())
+        
+        all_users = database.get_all_users_with_schedules()
+        
+        for user_id in all_users:
+            if not database.get_user_daily_summary_preference(user_id):
+                continue
+            
+            schedules = database.get_schedules_by_date_range(user_id, start_date, end_date)
+            
+            pending_schedules = [s for s in schedules if s['status'] == 'pending']
+            
+            if not pending_schedules:
+                continue
+            
+            msg = f"🌅 **Selamat Pagi! Jadwal Hari Ini ({today.strftime('%d/%m/%Y')}):**\n\n"
+            
+            for i, s in enumerate(pending_schedules, 1):
+                time_str = f"{s['schedule_time'].hour:02d}:{s['schedule_time'].minute:02d}"
+                msg += f"{i}. ⏳ **{s['title']}** - {time_str}\n"
+                
+                description = s.get('description', '')
+                if description:
+                    msg += f"   📍 {description}\n"
+                
+                remind_times = s.get('remind_times', '')
+                if remind_times:
+                    mins = [int(x) for x in remind_times.split(',')]
+                    remind_str = ', '.join([f'{x} min' for x in sorted(mins)])
+                    msg += f"   🔔 Reminder: {remind_str} sebelum\n"
+                
+                msg += "\n"
+            
+            msg += "Semangat menjalani hari! 💪"
+            
+            try:
+                await context.bot.send_message(chat_id=user_id, text=msg, parse_mode='Markdown',
+                                              reply_markup=create_main_menu())
+                logger.info(f"Daily summary sent to user {user_id}")
+            except Exception as e:
+                logger.error(f"Failed to send daily summary to user {user_id}: {e}")
+        
+        logger.info("Daily summary job completed")
+    except Exception as e:
+        logger.error(f"Error in daily summary job: {e}")
+
 async def auto_complete_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         now = get_local_now()
@@ -1552,7 +1605,10 @@ Contoh:
         return
     
     if data == 'settings':
-        msg = """
+        daily_enabled = database.get_user_daily_summary_preference(user_id)
+        daily_status = "✅ ON" if daily_enabled else "❌ OFF"
+        
+        msg = f"""
 ⚙️ **Settings**
 
 **🔔 Reminder Options:**
@@ -1567,23 +1623,73 @@ Contoh:
 • Shift 3: 16:00-00:00
 • Operasional: 11:00-19:00
 
-**📊 Statistics:**
-Total jadwal: {total}
-Pending: {pending}
-Completed: {completed}
+**🌅 Daily Summary:** {daily_status}
+Notifikasi jadwal harian setiap 06:00 pagi
 
-Pilih reminder sesuai kebutuhan saat membuat jadwal.
+**📊 Statistics:**
+Total jadwal: {len(database.get_user_schedules(user_id))}
+Pending: {len([s for s in database.get_user_schedules(user_id) if s['status'] == 'pending'])}
+Completed: {len([s for s in database.get_user_schedules(user_id) if s['status'] == 'completed'])}
 """
         
-        schedules = database.get_user_schedules(user_id)
-        total = len(schedules)
-        pending = len([s for s in schedules if s['status'] == 'pending'])
-        completed = len([s for s in schedules if s['status'] == 'completed'])
-        
-        msg = msg.format(total=total, pending=pending, completed=completed)
+        keyboard = [
+            [
+                InlineKeyboardButton(f'🌅 Daily Summary: {daily_status}', callback_data='toggle_daily_summary'),
+            ],
+            [
+                InlineKeyboardButton('⬅️ Back to Menu', callback_data='show_menu'),
+            ],
+        ]
         
         await query.edit_message_text(msg, parse_mode='Markdown',
-                                      reply_markup=create_main_menu())
+                                      reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+    
+    if data == 'toggle_daily_summary':
+        current = database.get_user_daily_summary_preference(user_id)
+        new_value = not current
+        database.set_user_daily_summary_preference(user_id, new_value)
+        
+        status = "diaktifkan" if new_value else "dinonaktifkan"
+        
+        await query.answer(f"Daily summary {status}!", show_alert=True)
+        
+        daily_status = "✅ ON" if new_value else "❌ OFF"
+        msg = f"""
+⚙️ **Settings**
+
+**🔔 Reminder Options:**
+• 5 min
+• 15 min
+• 30 min
+• 1 hour
+
+**⏰ Shift Templates:**
+• Shift 1: 00:00-08:00
+• Shift 2: 08:00-16:00
+• Shift 3: 16:00-00:00
+• Operasional: 11:00-19:00
+
+**🌅 Daily Summary:** {daily_status}
+Notifikasi jadwal harian setiap 06:00 pagi
+
+**📊 Statistics:**
+Total jadwal: {len(database.get_user_schedules(user_id))}
+Pending: {len([s for s in database.get_user_schedules(user_id) if s['status'] == 'pending'])}
+Completed: {len([s for s in database.get_user_schedules(user_id) if s['status'] == 'completed'])}
+"""
+        
+        keyboard = [
+            [
+                InlineKeyboardButton(f'🌅 Daily Summary: {daily_status}', callback_data='toggle_daily_summary'),
+            ],
+            [
+                InlineKeyboardButton('⬅️ Back to Menu', callback_data='show_menu'),
+            ],
+        ]
+        
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=InlineKeyboardMarkup(keyboard))
         return
     
     if data == 'show_menu':
@@ -2071,9 +2177,18 @@ def main():
     app.job_queue.run_repeating(check_starting_job, interval=300, first=10)
     app.job_queue.run_repeating(auto_refresh_list_job, interval=300, first=10)
     
+    now = get_local_now()
+    target_time = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if target_time <= now:
+        target_time += timedelta(days=1)
+    delay_seconds = (target_time - now).total_seconds()
+    
+    app.job_queue.run_repeating(send_daily_summary_job, interval=86400, first=delay_seconds)
+    
     logger.info("Auto-complete job scheduled - runs every 30 minutes")
     logger.info("Start notification job scheduled - runs every 5 minutes")
     logger.info("Auto-refresh list job scheduled - runs every 5 minutes")
+    logger.info(f"Daily summary job scheduled - runs at 06:00 WITA (next run in {int(delay_seconds/3600)} hours)")
     
     restore_reminders(app)
     

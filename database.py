@@ -412,3 +412,49 @@ def get_schedules_starting_now() -> List[dict]:
         'remind_times': row[4],
         'status': row[5]
     } for row in rows]
+
+def get_all_users_with_schedules() -> List[int]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT user_id FROM schedules')
+    rows = cursor.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
+
+def get_user_daily_summary_preference(user_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER PRIMARY KEY,
+            daily_summary_enabled INTEGER DEFAULT 1,
+            daily_summary_time TEXT DEFAULT '06:00'
+        )
+    ''')
+    cursor.execute('SELECT daily_summary_enabled FROM user_preferences WHERE user_id = ?', (user_id,))
+    row = cursor.fetchone()
+    if row is None:
+        cursor.execute('INSERT INTO user_preferences (user_id) VALUES (?)', (user_id,))
+        conn.commit()
+        enabled = True
+    else:
+        enabled = bool(row[0])
+    conn.close()
+    return enabled
+
+def set_user_daily_summary_preference(user_id: int, enabled: bool):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER PRIMARY KEY,
+            daily_summary_enabled INTEGER DEFAULT 1,
+            daily_summary_time TEXT DEFAULT '06:00'
+        )
+    ''')
+    cursor.execute('''
+        INSERT OR REPLACE INTO user_preferences (user_id, daily_summary_enabled)
+        VALUES (?, ?)
+    ''', (user_id, 1 if enabled else 0))
+    conn.commit()
+    conn.close()
