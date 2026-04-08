@@ -343,6 +343,9 @@ def create_schedule_actions_keyboard(schedule_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton('📝 Edit', callback_data=f'edit_{schedule_id}'),
             InlineKeyboardButton('🔔 Reminder', callback_data=f'reminder_{schedule_id}'),
         ],
+        [
+            InlineKeyboardButton('🏠 Menu Utama', callback_data='main_menu'),
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -1058,6 +1061,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
             await query.edit_message_text(msg, parse_mode='Markdown',
                                           reply_markup=create_shift_selection_keyboard())
+        return
+    
+    if data == 'main_menu':
+        await query.edit_message_text(
+            "🏠 Menu Utama",
+            reply_markup=create_main_menu()
+        )
         return
     
     if data == 'add_schedule':
