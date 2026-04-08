@@ -170,6 +170,26 @@ def create_calendar_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
     
     return InlineKeyboardMarkup(keyboard)
 
+def create_filter_keyboard() -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton('📅 Hari Ini', callback_data='filter_today'),
+        ],
+        [
+            InlineKeyboardButton('📆 Minggu Ini', callback_data='filter_week'),
+        ],
+        [
+            InlineKeyboardButton('🗓️ Bulan Ini', callback_data='filter_month'),
+        ],
+        [
+            InlineKeyboardButton('📊 Custom Range', callback_data='filter_custom'),
+        ],
+        [
+            InlineKeyboardButton('⬅️ Back', callback_data='show_menu'),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 def create_main_menu() -> InlineKeyboardMarkup:
     keyboard = [
         [
@@ -519,18 +539,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     state['filter_start'] = start_date
                     state['waiting_for'] = 'filter_end'
                     
-                    await update.message.reply_text(
-                        f"✅ Start: {start_date.strftime('%d/%m/%Y')}\n\n📊 Ketik tanggal akhir (DD/MM/YYYY):",
-                        parse_mode='Markdown'
-                    )
+                    msg = f"""
+✅ **Tanggal Awal:** {start_date.strftime('%d/%m/%Y')}
+
+Sekarang ketik tanggal akhir (DD/MM atau DD/MM/YYYY):
+
+Contoh:
+• 15/04
+• 15/04/2026
+"""
+                    await update.message.reply_text(msg, parse_mode='Markdown')
                 else:
                     await update.message.reply_text(
-                        "❌ Format salah!\n\nGunakan: DD/MM/YYYY atau DD/MM",
+                        "❌ Format salah!\n\nGunakan: DD/MM atau DD/MM/YYYY\nContoh: 10/04 atau 10/04/2026",
                         parse_mode='Markdown'
                     )
             except:
                 await update.message.reply_text(
-                    "❌ Format tanggal salah!\n\nGunakan: DD/MM/YYYY atau DD/MM",
+                    "❌ Format tanggal salah!\n\nGunakan: DD/MM atau DD/MM/YYYY\nContoh: 10/04 atau 10/04/2026",
                     parse_mode='Markdown'
                 )
             return
@@ -548,13 +574,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     schedules = database.get_schedules_by_date_range(user_id, start_date, end_date)
                     
                     if not schedules:
-                        await update.message.reply_text(
-                            f"📊 Tidak ada jadwal dalam range tersebut.",
-                            parse_mode='Markdown',
-                            reply_markup=create_main_menu()
-                        )
+                        msg = f"""
+📭 Tidak ada jadwal dalam range:
+{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}
+"""
+                        await update.message.reply_text(msg, parse_mode='Markdown',
+                                                        reply_markup=create_main_menu())
                     else:
-                        msg = f"📊 **Jadwal {start_date.strftime('%d/%m')} - {end_date.strftime('%d/%m')}:**\n\n"
+                        msg = f"""
+📊 **Jadwal {start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}:**
+
+"""
                         for i, s in enumerate(schedules, 1):
                             status_emoji = '✅' if s['status'] == 'completed' else '⏳'
                             msg += f"{i}. {status_emoji} **{s['title']}**\n"
@@ -566,12 +596,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user_states[user_id] = {}
                 else:
                     await update.message.reply_text(
-                        "❌ Format salah!\n\nGunakan: DD/MM/YYYY atau DD/MM",
+                        "❌ Format salah!\n\nGunakan: DD/MM atau DD/MM/YYYY\nContoh: 15/04 atau 15/04/2026",
                         parse_mode='Markdown'
                     )
             except:
                 await update.message.reply_text(
-                    "❌ Format tanggal salah!\n\nGunakan: DD/MM/YYYY atau DD/MM",
+                    "❌ Format tanggal salah!\n\nGunakan: DD/MM atau DD/MM/YYYY\nContoh: 15/04 atau 15/04/2026",
                     parse_mode='Markdown'
                 )
             return
@@ -959,11 +989,88 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == 'filter':
+        msg = "📊 **Filter Jadwal**\n\nPilih range waktu:"
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_filter_keyboard())
+        return
+    
+    if data == 'filter_today':
+        today = datetime.now().date()
+        start_date = datetime.combine(today, datetime.min.time())
+        end_date = datetime.combine(today, datetime.max.time())
+        
+        schedules = database.get_schedules_by_date_range(user_id, start_date, end_date)
+        
+        if not schedules:
+            msg = "📭 Tidak ada jadwal hari ini."
+        else:
+            msg = f"📅 **Jadwal Hari Ini ({today.strftime('%d/%m/%Y')}):**\n\n"
+            for i, s in enumerate(schedules, 1):
+                status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+                time_only = s['schedule_time'].strftime('%H:%M')
+                msg += f"{i}. {status_emoji} **{s['title']}** - {time_only}\n"
+        
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_main_menu())
+        return
+    
+    if data == 'filter_week':
+        today = datetime.now()
+        start_week = today - timedelta(days=today.weekday())
+        start_date = datetime.combine(start_week.date(), datetime.min.time())
+        end_date = start_date + timedelta(days=6, hours=23, minutes=59, seconds=59)
+        
+        schedules = database.get_schedules_by_date_range(user_id, start_date, end_date)
+        
+        if not schedules:
+            msg = "📭 Tidak ada jadwal minggu ini."
+        else:
+            msg = f"📆 **Jadwal Minggu Ini:**\n\n"
+            for i, s in enumerate(schedules, 1):
+                status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+                msg += f"{i}. {status_emoji} **{s['title']}**\n"
+                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+        
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_main_menu())
+        return
+    
+    if data == 'filter_month':
+        today = datetime.now()
+        start_date = datetime(today.year, today.month, 1)
+        if today.month == 12:
+            end_date = datetime(today.year + 1, 1, 1) - timedelta(seconds=1)
+        else:
+            end_date = datetime(today.year, today.month + 1, 1) - timedelta(seconds=1)
+        
+        schedules = database.get_schedules_by_date_range(user_id, start_date, end_date)
+        
+        if not schedules:
+            msg = "📭 Tidak ada jadwal bulan ini."
+        else:
+            msg = f"🗓️ **Jadwal Bulan Ini ({today.strftime('%B %Y')}):**\n\n"
+            for i, s in enumerate(schedules, 1):
+                status_emoji = '✅' if s['status'] == 'completed' else '⏳'
+                msg += f"{i}. {status_emoji} **{s['title']}**\n"
+                msg += f"   📅 {format_datetime(s['schedule_time'])}\n"
+        
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=create_main_menu())
+        return
+    
+    if data == 'filter_custom':
         user_states[user_id] = {'waiting_for': 'filter_start'}
-        await query.edit_message_text(
-            "📊 Ketik tanggal awal (DD/MM/YYYY):",
-            reply_markup=None
-        )
+        msg = """
+📊 **Custom Range Filter**
+
+Ketik tanggal awal (DD/MM atau DD/MM/YYYY):
+
+Contoh:
+• 10/04
+• 10/04/2026
+"""
+        await query.edit_message_text(msg, parse_mode='Markdown',
+                                      reply_markup=None)
         return
     
     if data == 'help':
