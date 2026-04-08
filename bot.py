@@ -20,9 +20,10 @@ WITA_OFFSET = timedelta(hours=8)
 WITA_TIMEZONE = timezone(WITA_OFFSET)
 
 def get_local_now():
-    return datetime.now(WITA_TIMEZONE)
+    utc_now = datetime.utcnow()
+    return utc_now + WITA_OFFSET
 
-scheduler = BackgroundScheduler(timezone=WITA_TIMEZONE)
+scheduler = BackgroundScheduler()
 scheduler.start()
 
 user_states = {}
@@ -60,9 +61,6 @@ def send_start_notification_sync(user_id: int, schedule_id: int, title: str, sch
 async def send_start_notification(user_id: int, schedule_id: int, title: str, schedule_time: datetime):
     app = None
     try:
-        if schedule_time.tzinfo is None:
-            schedule_time = schedule_time.replace(tzinfo=WITA_TIMEZONE)
-        
         app = Application.builder().token(BOT_TOKEN).build()
         await app.initialize()
         await app.start()
@@ -105,9 +103,6 @@ def check_schedules_starting():
             user_id = schedule['user_id']
             title = schedule['title']
             schedule_time = schedule['schedule_time']
-            
-            if schedule_time.tzinfo is None:
-                schedule_time = schedule_time.replace(tzinfo=WITA_TIMEZONE)
             
             if not database.get_start_notifications_sent(schedule_id):
                 send_start_notification_sync(user_id, schedule_id, title, schedule_time)
@@ -209,9 +204,6 @@ def restore_reminders():
             title = schedule['title']
             schedule_time = schedule['schedule_time']
             
-            if schedule_time.tzinfo is None:
-                schedule_time = schedule_time.replace(tzinfo=WITA_TIMEZONE)
-            
             remind_times = schedule.get('remind_times', '5')
             
             logger.info(f"Schedule {schedule_id}: time={schedule_time}, remind_times={remind_times}")
@@ -231,15 +223,20 @@ def restore_reminders():
                 logger.info(f"Reminder {rem_time} min: reminder_time={reminder_datetime}, now={get_local_now()}")
                 
                 if reminder_datetime > get_local_now():
+                    if reminder_datetime.tzinfo is not None:
+                        reminder_datetime_naive = reminder_datetime.replace(tzinfo=None)
+                    else:
+                        reminder_datetime_naive = reminder_datetime
+                    
                     scheduler.add_job(
                         send_reminder_sync,
-                        trigger=DateTrigger(run_date=reminder_datetime),
+                        trigger=DateTrigger(run_date=reminder_datetime_naive),
                         args=[user_id, schedule_id, title, schedule_time, rem_time],
                         id=f'reminder_{schedule_id}_{rem_time}',
                         replace_existing=True
                     )
                     restored_count += 1
-                    logger.info(f"Restored reminder for schedule {schedule_id} at {reminder_datetime}")
+                    logger.info(f"Restored reminder for schedule {schedule_id} at {reminder_datetime_naive}")
                 else:
                     logger.info(f"Skipped reminder {rem_time} for schedule {schedule_id} - time already passed")
         
@@ -815,7 +812,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if parsed_time:
                 hour, minute = parsed_time
                 date = state.get('date', get_local_now())
-                schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0, tzinfo=WITA_TIMEZONE)
+                schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
                 
                 title = state.get('title', 'Untitled')
                 
@@ -1105,7 +1102,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             hour = shift_info['hour']
             
             date = user_states[user_id].get('date', get_local_now())
-            schedule_time = date.replace(hour=hour, minute=0, second=0, microsecond=0, tzinfo=WITA_TIMEZONE)
+            schedule_time = date.replace(hour=hour, minute=0, second=0, microsecond=0)
             
             user_states[user_id]['schedule_time'] = schedule_time
             user_states[user_id]['waiting_for'] = 'reminder'
@@ -1162,7 +1159,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if user_id in user_states:
             date = user_states[user_id].get('date', get_local_now())
-            schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0, tzinfo=WITA_TIMEZONE)
+            schedule_time = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
             
             user_states[user_id]['schedule_time'] = schedule_time
             user_states[user_id]['waiting_for'] = 'reminder'
@@ -1232,16 +1229,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for rem_time in [int(x) for x in remind_times.split(',')]:
                 reminder_datetime = schedule_time - timedelta(minutes=rem_time)
+                
+                if reminder_datetime.tzinfo is not None:
+                    reminder_datetime_naive = reminder_datetime.replace(tzinfo=None)
+                else:
+                    reminder_datetime_naive = reminder_datetime
+                
                 logger.info(f"Checking reminder {rem_time} min: reminder_time={reminder_datetime}, now={get_local_now()}, should_schedule={reminder_datetime > get_local_now()}")
                 if reminder_datetime > get_local_now():
                     scheduler.add_job(
                         send_reminder_sync,
-                        trigger=DateTrigger(run_date=reminder_datetime),
+                        trigger=DateTrigger(run_date=reminder_datetime_naive),
                         args=[user_id, schedule_id, title, schedule_time, rem_time],
                         id=f'reminder_{schedule_id}_{rem_time}',
                         replace_existing=True
                     )
-                    logger.info(f"Scheduled reminder for schedule {schedule_id} at {reminder_datetime}")
+                    logger.info(f"Scheduled reminder for schedule {schedule_id} at {reminder_datetime_naive}")
                 else:
                     logger.info(f"Skipped reminder {rem_time} min - time already passed")
             
@@ -1682,9 +1685,6 @@ def send_reminder_sync(user_id: int, schedule_id: int, title: str, schedule_time
 async def send_reminder(user_id: int, schedule_id: int, title: str, schedule_time: datetime, rem_minutes: int):
     app = None
     try:
-        if schedule_time.tzinfo is None:
-            schedule_time = schedule_time.replace(tzinfo=WITA_TIMEZONE)
-        
         app = Application.builder().token(BOT_TOKEN).build()
         await app.initialize()
         await app.start()
