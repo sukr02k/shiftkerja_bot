@@ -1460,7 +1460,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             database.remove_active_list_view(user_id)
             return
         
-        msg = "📅 **Jadwal Hari Ini:**\n\n"
+        today = get_local_now().date()
+        msg = f"📅 **Jadwal Hari Ini ({today.strftime('%d/%m/%Y')}):**\n\n"
         msg += "Legend: ⏳ Menunggu | ⏱️ Berlangsung | ✅ Selesai\n\n"
         msg += "_🔄 Auto-refresh setiap 5 menit_\n\n"
         
@@ -1468,6 +1469,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status_emoji = get_smart_status(s)
             time_only = f"{s['schedule_time'].hour:02d}:{s['schedule_time'].minute:02d}"
             msg += f"{i}. {status_emoji} **{s['title']}** - {time_only}\n"
+            
+            description = s.get('description', '')
+            if description and ('Shift' in description or 'Operasional' in description):
+                msg += f"   📍 {description}\n"
+            
+            remind_times = s.get('remind_times', '')
+            if remind_times:
+                mins = [int(x) for x in remind_times.split(',')]
+                remind_str = ', '.join([f'{x} min' for x in sorted(mins)])
+                msg += f"   🔔 {remind_str} sebelum\n"
+            
+            msg += f"   ID: {s['id']}\n\n"
         
         await query.edit_message_text(msg, parse_mode='Markdown',
                                       reply_markup=create_main_menu())
