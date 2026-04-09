@@ -453,8 +453,61 @@ def set_user_daily_summary_preference(user_id: int, enabled: bool):
         )
     ''')
     cursor.execute('''
-        INSERT OR REPLACE INTO user_preferences (user_id, daily_summary_enabled)
-        VALUES (?, ?)
-    ''', (user_id, 1 if enabled else 0))
+        INSERT OR REPLACE INTO user_preferences (user_id, daily_summary_enabled, daily_summary_time)
+        VALUES (?, ?, COALESCE((SELECT daily_summary_time FROM user_preferences WHERE user_id = ?), '06:00'))
+    ''', (user_id, 1 if enabled else 0, user_id))
     conn.commit()
     conn.close()
+
+def get_user_daily_summary_time(user_id: int) -> str:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER PRIMARY KEY,
+            daily_summary_enabled INTEGER DEFAULT 1,
+            daily_summary_time TEXT DEFAULT '06:00'
+        )
+    ''')
+    cursor.execute('SELECT daily_summary_time FROM user_preferences WHERE user_id = ?', (user_id,))
+    row = cursor.fetchone()
+    if row is None:
+        cursor.execute('INSERT INTO user_preferences (user_id) VALUES (?)', (user_id,))
+        conn.commit()
+        time = '06:00'
+    else:
+        time = row[0]
+    conn.close()
+    return time
+
+def set_user_daily_summary_time(user_id: int, time: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER PRIMARY KEY,
+            daily_summary_enabled INTEGER DEFAULT 1,
+            daily_summary_time TEXT DEFAULT '06:00'
+        )
+    ''')
+    cursor.execute('''
+        INSERT OR REPLACE INTO user_preferences (user_id, daily_summary_enabled, daily_summary_time)
+        VALUES (?, COALESCE((SELECT daily_summary_enabled FROM user_preferences WHERE user_id = ?), 1), ?)
+    ''', (user_id, user_id, time))
+    conn.commit()
+    conn.close()
+
+def get_all_users_with_summary_enabled() -> List[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER PRIMARY KEY,
+            daily_summary_enabled INTEGER DEFAULT 1,
+            daily_summary_time TEXT DEFAULT '06:00'
+        )
+    ''')
+    cursor.execute('SELECT user_id, daily_summary_time FROM user_preferences WHERE daily_summary_enabled = 1')
+    rows = cursor.fetchall()
+    conn.close()
+    return [{'user_id': row[0], 'summary_time': row[1]} for row in rows]
