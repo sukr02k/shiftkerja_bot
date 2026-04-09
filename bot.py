@@ -73,27 +73,38 @@ async def send_daily_summary_job(context: ContextTypes.DEFAULT_TYPE):
             
             schedules = database.get_schedules_by_date_range(user_id, start_date, end_date)
             
-            pending_schedules = [s for s in schedules if s['status'] == 'pending']
-            
-            if not pending_schedules:
+            if not schedules:
                 continue
+            
+            pending_schedules = [s for s in schedules if s['status'] == 'pending']
+            other_schedules = [s for s in schedules if s['status'] != 'pending']
             
             msg = f"🌅 **Selamat Pagi! Jadwal Hari Ini ({today.strftime('%d/%m/%Y')}):**\n\n"
             
-            for i, s in enumerate(pending_schedules, 1):
-                time_str = f"{s['schedule_time'].hour:02d}:{s['schedule_time'].minute:02d}"
-                msg += f"{i}. ⏳ **{s['title']}** - {time_str}\n"
-                
-                description = s.get('description', '')
-                if description:
-                    msg += f"   📍 {description}\n"
-                
-                remind_times = s.get('remind_times', '')
-                if remind_times:
-                    mins = [int(x) for x in remind_times.split(',')]
-                    remind_str = ', '.join([f'{x} min' for x in sorted(mins)])
-                    msg += f"   🔔 Reminder: {remind_str} sebelum\n"
-                
+            if pending_schedules:
+                msg += "**📋 Jadwal Menunggu:**\n\n"
+                for i, s in enumerate(pending_schedules, 1):
+                    time_str = f"{s['schedule_time'].hour:02d}:{s['schedule_time'].minute:02d}"
+                    msg += f"{i}. ⏳ **{s['title']}** - {time_str}\n"
+                    
+                    description = s.get('description', '')
+                    if description:
+                        msg += f"   📍 {description}\n"
+                    
+                    remind_times = s.get('remind_times', '')
+                    if remind_times:
+                        mins = [int(x) for x in remind_times.split(',')]
+                        remind_str = ', '.join([f'{x} min' for x in sorted(mins)])
+                        msg += f"   🔔 Reminder: {remind_str} sebelum\n"
+                    
+                    msg += "\n"
+            
+            if other_schedules:
+                msg += "**✅ Jadwal Lainnya:**\n\n"
+                for i, s in enumerate(other_schedules, 1):
+                    time_str = f"{s['schedule_time'].hour:02d}:{s['schedule_time'].minute:02d}"
+                    status_emoji = '✅' if s['status'] == 'completed' else '⏱️'
+                    msg += f"{i}. {status_emoji} {s['title']} - {time_str}\n"
                 msg += "\n"
             
             msg += "Semangat menjalani hari! 💪"
